@@ -22,6 +22,7 @@ exactly (no `^`) when their package is scaffolded in Phase 0–2.
 | UI runtime | React / React DOM | 19.3.0 | Required by Next 16. React Compiler (`babel-plugin-react-compiler` 1.0) enabled. |
 | Styling | Tailwind CSS v4 (`@tailwindcss/postcss`) | 4.3.3 | CSS-first `@theme` tokens shared through `packages/ui`. |
 | Motion | **Motion** (`motion`, formerly Framer Motion) | 14.1.1 | Same maintainers and API. `framer-motion` is now the legacy package name. Import from `motion/react`. |
+| Internationalisation | `next-intl` | 4.14.9 | Storefront strings in message files from day one. English only at launch, so Urdu (right-to-left) can be added later without a rebuild (decision D5). Peer-compatible with Next 16. |
 | Validation | Zod | 4.6.7 | One schema validates the form on the client and the command on the server. |
 | ORM | Prisma ORM + `@prisma/adapter-pg` + `pg` | **7.10.0** ✅ / 8.23.1 | **Not 8.x**: the `prisma` CLI's `latest` npm tag points at `8.0.0-rc.22` (a release candidate), while `@prisma/client`'s `latest` is 7.10.0. Pin both to 7.10.0. Prisma 7 uses the TS query compiler + driver adapter (no Rust query engine) and reads the connection URL from `prisma.config.ts`. |
 | Database | PostgreSQL | **17 or 18** (managed) | Schema verified on 16.15 locally; uses nothing newer than PG 13 (`pg_trgm` as a trusted extension). |

@@ -33,6 +33,7 @@ critical path in Pakistan. **Start those applications now.** Phases 5 and 6 can 
 DB integrity test suite, `.env.example`, pnpm workspace.
 
 Remaining:
+- Move the project into the dedicated `novyra` repository with its history (D12), then continue there.
 - Root tooling: `turbo.json`, shared `tsconfig`/ESLint (with import-boundary rules)/Prettier in `packages/config`, Renovate config.
 - `docker-compose.yml`: PostgreSQL 17 + Mailpit.
 - `packages/env` (server/client Zod schemas, boot-time validation).
@@ -55,6 +56,7 @@ Remaining:
 ### Phase 2: Catalog, media, design system, storefront shell *(UI begins)*
 
 - `packages/ui`: NOVYRA design language (typography, colour, spacing, motion tokens in Tailwind v4 `@theme`), accessible primitives, Motion presets (respecting `prefers-reduced-motion`).
+- Urdu-ready from the first screen (D5): `next-intl` with a single `en` locale, every storefront string in `messages/en.json`, logical start/end utilities (`ms-*`, `pe-*`, `text-start`) instead of left/right, and a lint rule against hard-coded JSX text.
 - Media: `MediaStorage` Cloudinary adapter, signed uploads, admin media library.
 - Admin: categories, collections, products with options/variants, inventory levels, publishing workflow, sanitised rich text.
 - Storefront: home, listing, collection, product detail (gallery with zoom, variant picker, stock island, reviews summary), search (trigram), navigation, footer, legal pages, sitemap and structured data.
@@ -85,7 +87,7 @@ Remaining:
 
 ### Phase 5: Online payment gateway (first Pakistani gateway)
 
-*Requires: sandbox + live merchant credentials for the chosen gateway (see open decision D1).*
+*Requires: sandbox + live merchant credentials for the first gateway to approve NOVYRA (decision D1).*
 
 - Adapter following the checklist in [04-payments.md §6](04-payments.md#checklist-for-adding-a-provider): signature verification, status inquiry, return handling, webhooks, refunds (if the gateway's API supports them).
 - Shared provider contract test suite, recorded sandbox fixtures, reconciliation job, CSP `form-action` update.
@@ -95,7 +97,7 @@ Remaining:
 
 ### Phase 6: Courier API integration (first courier)
 
-*Requires: courier account + API credentials (open decision D2).*
+*Requires: business account + API credentials for the courier chosen from the quotes (decision D2).*
 
 - Adapter: booking, label to private storage, cancellation, tracking (webhook or polling), city list sync + mapping UI.
 - Idempotent booking with lookup-by-reference, `EXCEPTION` handling, RTO flow, COD capture on delivery, COD remittance import.
@@ -142,24 +144,25 @@ warnings, docs updated when a contract changes.
 
 ---
 
-## Open decisions
+## Decisions
 
-These need your input. The architecture supports every option; the answers decide ordering and configuration.
+Agreed with the owner on **2026-10-13**. D9–D11 are still open. The architecture supports every option, so the open
+ones only change configuration, not design.
 
-| # | Decision | Options | Recommendation |
+| # | Decision | Status | Outcome |
 |---|---|---|---|
-| D1 | First online payment gateway | JazzCash · Easypaisa · PayFast · Safepay · bank MPGS | Whichever approves NOVYRA's merchant account first with card + wallet support. **Apply to two in parallel now.** |
-| D2 | First courier API | TCS · Leopards · PostEx · M&P · Trax | One with an API, reliable COD remittance and insured high-value service in your main cities. Launch on `manual` until then. |
-| D3 | Pricing model | Fixed prices · gold-rate-linked (weight × daily rate + making charges) | Fixed prices for v1. If gold-linked pricing is wanted, add a `metal_rates` table and a pricing strategy on variants. Order snapshots already make this additive. |
-| D4 | COD policy | max COD order value · advance % above threshold · COD fee · mandatory confirmation | COD up to a threshold, mandatory WhatsApp/phone confirmation, advance payment for high-value pieces. |
-| D5 | Languages | English only · English + Urdu (RTL) | **Decide before Phase 2.** Urdu needs `next-intl`, RTL-aware components and translated emails. Retrofitting RTL later is expensive. |
-| D6 | Hosting | Vercel + managed Postgres (Neon / Supabase / RDS) · self-hosted Docker | Vercel Pro + a managed Postgres in the nearest supported region to Pakistan. |
-| D7 | Media vendor | Cloudinary · Cloudflare R2 + Next image optimisation | Cloudinary for v1 (transform quality matters for jewellery photography). |
-| D8 | Returns policy | window (days) · engraved/personalised items excluded · exchange vs refund | 7 days, personalised items non-returnable, exchange preferred. |
-| D9 | Tax | prices tax-inclusive? · tax registration / FBR invoicing obligations | Tax-inclusive display (`prices_include_tax = true`). Confirm invoicing obligations with your tax advisor. |
-| D10 | Ad optimisation signal | purchase at placement · purchase at delivery | Send both: `purchase` at placement plus a server-side `order_delivered` event for value-based bidding on real revenue. |
-| D11 | Domains | `novyra.pk` / `novyra.com`, `admin.` subdomain | Confirm, so cookies, CSP and email authentication can be configured. |
-| D12 | Repository | Keep in this repo under `novyra/` · move to a dedicated `novyra` repository | Dedicated repository before Phase 0 completes (cleaner CI, permissions and deploy hooks). |
+| D1 | First online payment gateway | ✅ Decided | Apply to two in parallel: one wallet provider (JazzCash or Easypaisa) and one card provider (Safepay or PayFast). Integrate whichever approves first in Phase 5. Until then the store takes COD and bank transfer, which need no accounts. |
+| D2 | First courier API | ✅ Decided | Launch on the `manual` carrier. Get quotes from TCS, Leopards and PostEx, comparing COD remittance speed, insured high-value delivery and coverage in the main cities. Integrate the chosen courier in Phase 6. |
+| D3 | Pricing model | ✅ Decided | Fixed prices for v1. Gold-rate-linked pricing can be added later (a `metal_rates` table and a pricing strategy on variants) without breaking orders, because orders snapshot their prices. |
+| D4 | COD policy | ✅ Decided | COD allowed up to `settings.cod.max_order_total` (starting value PKR 50,000; the owner adjusts it in admin). Orders above it require an advance payment (amount set by the owner). WhatsApp or phone confirmation is mandatory for every COD order (`settings.cod.verification_required = true`). COD fee: none by default, configurable. |
+| D5 | Languages | ✅ Decided | **English at launch, Urdu-ready from day one.** Storefront strings live in `next-intl` message files with a single `en` locale, components use logical start/end spacing and alignment, and no text is hard-coded. Adding Urdu later means translations, an `ur` locale and right-to-left QA, not a UI rebuild. Admin stays English-only. |
+| D6 | Hosting | ✅ Decided | Vercel Pro + managed PostgreSQL in the supported region nearest to Pakistan. |
+| D7 | Media vendor | ✅ Decided | Cloudinary. |
+| D8 | Returns policy | ✅ Decided | 7 days from delivery. Personalised and engraved items are non-returnable. Whether a given return ends in a refund or an exchange is chosen per return (`returns.resolution`). |
+| D9 | Tax | Open | Recommendation: tax-inclusive display (`prices_include_tax = true`). Confirm invoicing obligations with your tax advisor. |
+| D10 | Ad optimisation signal | Open | Recommendation: send `purchase` at placement plus a server-side `order_delivered` event, so ad platforms can bid on delivered revenue. Needed by Phase 7. |
+| D11 | Domains | Open | Confirm `novyra.pk` / `novyra.com` and the `admin.` subdomain before Phase 0 deploys to staging (cookies, CSP and email authentication depend on them). |
+| D12 | Repository | ✅ Decided | Move NOVYRA to a dedicated `novyra` GitHub repository, with its git history, at the start of Phase 0. |
 
 ## Accounts and credentials to request now
 

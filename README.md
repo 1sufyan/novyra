@@ -4,9 +4,10 @@ Production architecture for NOVYRA's online store: a customer storefront, an ope
 backend for catalog, orders, inventory, payments, shipping, notifications and analytics, built for the Pakistani
 market first (COD, bank transfer, local gateways and couriers) and international later.
 
-> **Status: architecture review.** This folder holds the design for review and a working, tested
-> database package. **No UI has been built yet.** Implementation begins after sign-off, following
-> [docs/08-implementation-plan.md](docs/08-implementation-plan.md).
+> **Status: design agreed, implementation not started.** This folder holds the architecture and a working,
+> tested database package. **No UI has been built yet.** The key product decisions are recorded in
+> [docs/08-implementation-plan.md](docs/08-implementation-plan.md#decisions). Implementation starts with Phase 0,
+> beginning with the move to a dedicated `novyra` repository.
 
 ## Documents
 
@@ -20,7 +21,7 @@ market first (COD, bank transfer, local gateways and couriers) and international
 | 05 | [Shipping](docs/05-shipping.md) | Courier abstraction, rates, city mapping, idempotent booking, tracking, RTO, reverse logistics |
 | 06 | [Integrations](docs/06-integrations.md) | Notifications (email, WhatsApp, SMS), media storage, analytics (GA4, Meta, server-side), platform services |
 | 07 | [Folder structure](docs/07-folder-structure.md) | Monorepo layout and dependency rules |
-| 08 | [Implementation plan](docs/08-implementation-plan.md) | Phases, exit criteria, testing strategy, **open decisions**, accounts to request |
+| 08 | [Implementation plan](docs/08-implementation-plan.md) | Phases, exit criteria, testing strategy, **decisions** (agreed and still open), accounts to request |
 | 09 | [Environment](docs/09-environment.md) | Every env var: purpose, app, secret/public, when required |
 
 ## What exists and is verified

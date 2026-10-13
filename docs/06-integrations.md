@@ -177,7 +177,7 @@ flowchart LR
 - **Purchases are measured server-side too** (ad blockers and Safari ITP drop browser events). The browser `purchase` and the server send share `event_id = order.id`, so GA4 and Meta de-duplicate. GA client ID, `_fbp`/`_fbc`, UTMs, landing page and referrer are captured at checkout (consent permitting) into `orders.attribution`.
 - **Consent:** Google Consent Mode v2 (`ad_storage`, `analytics_storage`, `ad_user_data`, `ad_personalization`) with a NOVYRA-designed banner. Destinations fire only when their category is granted.
 - **Privacy:** no PII is ever sent to GA4. Meta CAPI receives only SHA-256 hashes of normalised email and phone (Meta's required format), and only with marketing consent.
-- Purchase value is sent at placement. For a COD-heavy business, a server-only `order_delivered` event is also available, so ad platforms can optimise on delivered revenue rather than placed orders (see open decisions).
+- Purchase value is sent at placement. For a COD-heavy business, a server-only `order_delivered` event is also available, so ad platforms can optimise on delivered revenue rather than placed orders (open decision D10 in [08-implementation-plan.md](08-implementation-plan.md#decisions)).
 
 ### Contracts
 

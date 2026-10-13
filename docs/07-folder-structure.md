@@ -18,9 +18,11 @@ novyra/
 ├── apps/
 │   ├── storefront/                      novyra.pk — Next.js 16
 │   │   ├── next.config.ts               headers/CSP, images loader, typedRoutes, reactCompiler, taint
+│   │   ├── messages/en.json             every storefront string (next-intl). Urdu later = messages/ur.json
 │   │   ├── src/
 │   │   │   ├── proxy.ts                 request id · cheap auth redirects (NOT a security boundary)
 │   │   │   ├── instrumentation.ts       Sentry / OpenTelemetry
+│   │   │   ├── i18n/request.ts          next-intl config (single `en` locale at launch)
 │   │   │   ├── app/
 │   │   │   │   ├── layout.tsx · globals.css (imports @novyra/ui theme)
 │   │   │   │   ├── (marketing)/         home, about, journal, boutique, care guide
