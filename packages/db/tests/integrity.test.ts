@@ -5,7 +5,7 @@
  * including under concurrency. Run against a DISPOSABLE database with all
  * migrations applied:
  *
- *   pnpm db:test:prepare && pnpm db:test      (TEST_DATABASE_URL from novyra/.env or the shell)
+ *   pnpm db:test:prepare && pnpm db:test      (TEST_DATABASE_URL from the root .env or the shell)
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";

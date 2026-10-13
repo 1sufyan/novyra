@@ -4,10 +4,9 @@ Production architecture for NOVYRA's online store: a customer storefront, an ope
 backend for catalog, orders, inventory, payments, shipping, notifications and analytics, built for the Pakistani
 market first (COD, bank transfer, local gateways and couriers) and international later.
 
-> **Status: design agreed, implementation not started.** This folder holds the architecture and a working,
+> **Status: Phase 0 (foundations) in progress.** This repository holds the architecture and a working,
 > tested database package. **No UI has been built yet.** The key product decisions are recorded in
-> [docs/08-implementation-plan.md](docs/08-implementation-plan.md#decisions). Implementation starts with Phase 0,
-> beginning with the move to a dedicated `novyra` repository.
+> [docs/08-implementation-plan.md](docs/08-implementation-plan.md#decisions).
 
 ## Documents
 
@@ -39,7 +38,7 @@ market first (COD, bank transfer, local gateways and couriers) and international
 Requires Node 24 LTS, pnpm 11 and a PostgreSQL ≥ 13 you can create databases on.
 
 ```bash
-cd novyra
+git clone https://github.com/1sufyan/novyra && cd novyra
 pnpm install
 cp .env.example .env                      # set DIRECT_DATABASE_URL, SHADOW_DATABASE_URL, TEST_DATABASE_URL
 
@@ -53,7 +52,7 @@ pnpm db:test:prepare                      # apply migrations to TEST_DATABASE_UR
 pnpm db:test
 ```
 
-The db scripts read `novyra/.env` (and `packages/db/.env` if present). Variables already exported in the shell take precedence.
+The db scripts read the repository's root `.env` (and `packages/db/.env` if present). Variables already exported in the shell take precedence.
 
 ## Principles
 

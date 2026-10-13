@@ -33,7 +33,7 @@ critical path in Pakistan. **Start those applications now.** Phases 5 and 6 can 
 DB integrity test suite, `.env.example`, pnpm workspace.
 
 Remaining:
-- Move the project into the dedicated `novyra` repository with its history (D12), then continue there.
+- ✅ Project moved into the dedicated [`1sufyan/novyra`](https://github.com/1sufyan/novyra) repository with its history (D12).
 - Root tooling: `turbo.json`, shared `tsconfig`/ESLint (with import-boundary rules)/Prettier in `packages/config`, Renovate config.
 - `docker-compose.yml`: PostgreSQL 17 + Mailpit.
 - `packages/env` (server/client Zod schemas, boot-time validation).
@@ -162,7 +162,7 @@ ones only change configuration, not design.
 | D9 | Tax | Open | Recommendation: tax-inclusive display (`prices_include_tax = true`). Confirm invoicing obligations with your tax advisor. |
 | D10 | Ad optimisation signal | Open | Recommendation: send `purchase` at placement plus a server-side `order_delivered` event, so ad platforms can bid on delivered revenue. Needed by Phase 7. |
 | D11 | Domains | Open | Confirm `novyra.pk` / `novyra.com` and the `admin.` subdomain before Phase 0 deploys to staging (cookies, CSP and email authentication depend on them). |
-| D12 | Repository | ✅ Decided | Move NOVYRA to a dedicated `novyra` GitHub repository, with its git history, at the start of Phase 0. |
+| D12 | Repository | ✅ Done | NOVYRA lives in its own repository, [`1sufyan/novyra`](https://github.com/1sufyan/novyra), with its git history (moved from `1sufyan/LocalRepo` at the start of Phase 0). |
 
 ## Accounts and credentials to request now
 
