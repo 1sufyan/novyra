@@ -1,0 +1,1830 @@
+// ============================================================================
+// NOVYRA — PostgreSQL schema (Prisma ORM 7)
+//
+// Conventions
+// - Primary keys: UUIDv7 (time-ordered, index-friendly), stored as native `uuid`.
+// - Tables/columns: snake_case in the database, camelCase in TypeScript.
+// - Money: NUMERIC(14,2) in the store's base currency (PKR). Never floats.
+// - Timestamps: timestamptz(3), always UTC.
+// - Orders, payments, refunds and shipments are never hard-deleted (FKs RESTRICT).
+// - Order lines snapshot product data; editing the catalog never rewrites history.
+// - CHECK constraints, partial unique indexes and append-only triggers that
+//   Prisma cannot express live in migrations/*_integrity_constraints.
+//
+// The User/Session/Account/Verification/TwoFactor models follow the Better Auth
+// core + two-factor plugin schema. Field names must stay as they are.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ----------------------------------------------------------------------------
+// Shared enums
+// ----------------------------------------------------------------------------
+
+enum ActorType {
+  CUSTOMER
+  STAFF
+  SYSTEM
+  PROVIDER
+
+  @@map("actor_type")
+}
+
+// ============================================================================
+// IDENTITY & ACCESS
+// ============================================================================
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+
+  @@map("user_status")
+}
+
+model User {
+  id               String     @id @default(uuid(7)) @db.Uuid
+  name             String     @db.VarChar(120)
+  /// Always stored lower-case (CHECK users_email_lowercase_chk).
+  email            String     @unique @db.VarChar(254)
+  emailVerified    Boolean    @default(false) @map("email_verified")
+  image            String?    @db.VarChar(2048)
+  /// E.164, e.g. +923001234567.
+  phone            String?    @db.VarChar(20)
+  phoneVerified    Boolean    @default(false) @map("phone_verified")
+  twoFactorEnabled Boolean    @default(false) @map("two_factor_enabled")
+  status           UserStatus @default(ACTIVE)
+  lastLoginAt      DateTime?  @map("last_login_at") @db.Timestamptz(3)
+  /// Set when the account is anonymised. Users with orders are anonymised, never hard-deleted.
+  deletedAt        DateTime?  @map("deleted_at") @db.Timestamptz(3)
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  sessions          Session[]
+  accounts          Account[]
+  twoFactors        TwoFactor[]
+  roles             UserRole[]            @relation("UserRoles")
+  addresses         Address[]
+  carts             Cart[]
+  orders            Order[]
+  reviews           Review[]              @relation("ReviewAuthor")
+  wishlistItems     WishlistItem[]
+  returns           Return[]
+  notifications     Notification[]
+  newsletter        NewsletterSubscriber?
+  couponRedemptions CouponRedemption[]
+
+  // Staff-side references (who did what)
+  roleAssignments    UserRole[]          @relation("RoleAssignedBy")
+  uploadedMedia      MediaAsset[]        @relation("MediaUploadedBy")
+  inventoryMovements InventoryMovement[] @relation("InventoryMovementActor")
+  orderEvents        OrderEvent[]        @relation("OrderEventActor")
+  verifiedPayments   Payment[]           @relation("PaymentVerifiedBy")
+  initiatedRefunds   Refund[]            @relation("RefundInitiatedBy")
+  moderatedReviews   Review[]            @relation("ReviewModeratedBy")
+  auditLogs          AuditLog[]          @relation("AuditActor")
+  settingsUpdated    Setting[]           @relation("SettingUpdatedBy")
+
+  @@index([phone])
+  @@index([createdAt(sort: Desc)])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  /// Opaque session token. The cookie carries token + HMAC signature (BETTER_AUTH_SECRET).
+  token     String   @unique @db.VarChar(255)
+  userId    String   @map("user_id") @db.Uuid
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  ipAddress String?  @map("ip_address") @db.VarChar(45)
+  userAgent String?  @map("user_agent") @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id @default(uuid(7)) @db.Uuid
+  userId                String    @map("user_id") @db.Uuid
+  /// Provider-side account id (for "credential" this equals the user id).
+  accountId             String    @map("account_id") @db.Text
+  /// "credential" | "google" | ...
+  providerId            String    @map("provider_id") @db.VarChar(64)
+  accessToken           String?   @map("access_token") @db.Text
+  refreshToken          String?   @map("refresh_token") @db.Text
+  idToken               String?   @map("id_token") @db.Text
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at") @db.Timestamptz(3)
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at") @db.Timestamptz(3)
+  scope                 String?   @db.Text
+  /// Argon2id PHC string. Only set when providerId = "credential". Never selected outside the auth module.
+  password              String?   @db.Text
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+/// Email verification, password reset and similar one-time tokens (managed by Better Auth).
+model Verification {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  identifier String   @db.Text
+  value      String   @db.Text
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([identifier])
+  @@index([expiresAt])
+  @@map("verifications")
+}
+
+/// TOTP secrets and backup codes (Better Auth two-factor plugin). Mandatory for staff accounts.
+model TwoFactor {
+  id                      String    @id @default(uuid(7)) @db.Uuid
+  userId                  String    @map("user_id") @db.Uuid
+  secret                  String    @db.Text
+  backupCodes             String    @map("backup_codes") @db.Text
+  verified                Boolean   @default(true)
+  failedVerificationCount Int       @default(0) @map("failed_verification_count")
+  lockedUntil             DateTime? @map("locked_until") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([secret])
+  @@map("two_factors")
+}
+
+/// Staff roles. Customers have no role; every signed-in user is implicitly a customer.
+model Role {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  /// Stable machine key, e.g. "owner", "store_manager", "fulfilment", "support", "content_editor".
+  key         String   @unique @db.VarChar(64)
+  name        String   @db.VarChar(100)
+  description String?  @db.VarChar(500)
+  /// System roles are seeded and cannot be renamed or deleted from the admin UI.
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+/// Permission keys are defined in code (packages/auth/src/permissions.ts) and synced here by the seed.
+model Permission {
+  id          String  @id @default(uuid(7)) @db.Uuid
+  /// e.g. "orders:read", "orders:refund", "products:write", "admin:access".
+  key         String  @unique @db.VarChar(100)
+  description String? @db.VarChar(500)
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId       String   @map("user_id") @db.Uuid
+  roleId       String   @map("role_id") @db.Uuid
+  assignedById String?  @map("assigned_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user       User  @relation("UserRoles", fields: [userId], references: [id], onDelete: Cascade)
+  /// A role that is still assigned cannot be deleted.
+  role       Role  @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  assignedBy User? @relation("RoleAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+// ============================================================================
+// MEDIA (cloud storage metadata — the binary lives with the storage provider)
+// ============================================================================
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+
+  @@map("media_type")
+}
+
+enum MediaVisibility {
+  /// Served through the CDN (product imagery).
+  PUBLIC
+  /// Only reachable through short-lived signed URLs (payment proofs, shipping labels).
+  PRIVATE
+
+  @@map("media_visibility")
+}
+
+model MediaAsset {
+  id           String          @id @default(uuid(7)) @db.Uuid
+  /// Storage adapter that owns the object: "cloudinary" | "s3".
+  provider     String          @db.VarChar(32)
+  /// Provider object key / public_id.
+  storageKey   String          @map("storage_key") @db.VarChar(512)
+  /// Canonical CDN URL for PUBLIC assets; null for PRIVATE ones.
+  url          String?         @db.VarChar(2048)
+  type         MediaType       @default(IMAGE)
+  visibility   MediaVisibility @default(PUBLIC)
+  mimeType     String          @map("mime_type") @db.VarChar(100)
+  sizeBytes    Int             @map("size_bytes")
+  width        Int?
+  height       Int?
+  /// SHA-256 of the uploaded bytes (dedupe + integrity).
+  checksum     String?         @db.Char(64)
+  altText      String?         @map("alt_text") @db.VarChar(300)
+  uploadedById String?         @map("uploaded_by_id") @db.Uuid
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  uploadedBy     User?          @relation("MediaUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  productMedia   ProductMedia[]
+  categories     Category[]
+  collections    Collection[]
+  paymentProofs  Payment[]      @relation("PaymentProof")
+  shipmentLabels Shipment[]     @relation("ShipmentLabel")
+
+  @@unique([provider, storageKey])
+  @@index([createdAt(sort: Desc)])
+  @@map("media_assets")
+}
+
+// ============================================================================
+// CATALOG
+// ============================================================================
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+
+  @@map("product_status")
+}
+
+model Category {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  parentId       String?  @map("parent_id") @db.Uuid
+  name           String   @db.VarChar(120)
+  slug           String   @unique @db.VarChar(140)
+  description    String?  @db.Text
+  imageId        String?  @map("image_id") @db.Uuid
+  position       Int      @default(0)
+  isActive       Boolean  @default(true) @map("is_active")
+  seoTitle       String?  @map("seo_title") @db.VarChar(160)
+  seoDescription String?  @map("seo_description") @db.VarChar(320)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  /// A category with children cannot be deleted.
+  parent        Category?        @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children      Category[]       @relation("CategoryTree")
+  image         MediaAsset?      @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  products      Product[]
+  couponTargets CouponCategory[]
+
+  @@index([parentId, position])
+  @@map("categories")
+}
+
+/// Merchandising groups, e.g. "Bridal 2026", "Eid Edit", "Everyday Gold".
+model Collection {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  name           String    @db.VarChar(120)
+  slug           String    @unique @db.VarChar(140)
+  description    String?   @db.Text
+  imageId        String?   @map("image_id") @db.Uuid
+  isActive       Boolean   @default(true) @map("is_active")
+  isFeatured     Boolean   @default(false) @map("is_featured")
+  position       Int       @default(0)
+  startsAt       DateTime? @map("starts_at") @db.Timestamptz(3)
+  endsAt         DateTime? @map("ends_at") @db.Timestamptz(3)
+  seoTitle       String?   @map("seo_title") @db.VarChar(160)
+  seoDescription String?   @map("seo_description") @db.VarChar(320)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  image         MediaAsset?         @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  products      ProductCollection[]
+  couponTargets CouponCollection[]
+
+  @@index([isActive, position])
+  @@map("collections")
+}
+
+model Product {
+  id                     String        @id @default(uuid(7)) @db.Uuid
+  slug                   String        @unique @db.VarChar(160)
+  name                   String        @db.VarChar(200)
+  subtitle               String?       @db.VarChar(200)
+  /// Sanitised HTML. The catalog service sanitises on write; the storefront never renders unsanitised HTML.
+  description            String?       @db.Text
+  status                 ProductStatus @default(DRAFT)
+  categoryId             String?       @map("category_id") @db.Uuid
+  /// Structured spec sheet validated by zod, e.g. [{ "label": "Metal", "value": "18K gold" }].
+  specifications         Json?
+  careInstructions       String?       @map("care_instructions") @db.Text
+  tags                   String[]      @default([])
+  isFeatured             Boolean       @default(false) @map("is_featured")
+  isMadeToOrder          Boolean       @default(false) @map("is_made_to_order")
+  leadTimeDays           Int?          @map("lead_time_days")
+  /// Null = not personalisable. Otherwise the allowed fields, e.g. engraving with max length.
+  personalizationOptions Json?         @map("personalization_options")
+  seoTitle               String?       @map("seo_title") @db.VarChar(160)
+  seoDescription         String?       @map("seo_description") @db.VarChar(320)
+  /// Denormalised from approved reviews inside the moderation transaction.
+  ratingAverage          Decimal       @default(0) @map("rating_average") @db.Decimal(3, 2)
+  reviewCount            Int           @default(0) @map("review_count")
+  publishedAt            DateTime?     @map("published_at") @db.Timestamptz(3)
+  createdAt              DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  /// A category that still has products cannot be deleted.
+  category      Category?           @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  options       ProductOption[]
+  variants      ProductVariant[]
+  media         ProductMedia[]
+  collections   ProductCollection[]
+  reviews       Review[]
+  wishlistItems WishlistItem[]
+  orderItems    OrderItem[]
+  couponTargets CouponProduct[]
+
+  @@index([status, publishedAt(sort: Desc)])
+  @@index([categoryId, status])
+  @@index([status, isFeatured])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "products_name_trgm_idx")
+  @@index([tags], type: Gin)
+  @@map("products")
+}
+
+/// Option axes for a product, e.g. "Metal", "Ring size", "Stone".
+model ProductOption {
+  id        String @id @default(uuid(7)) @db.Uuid
+  productId String @map("product_id") @db.Uuid
+  name      String @db.VarChar(60)
+  position  Int    @default(0)
+
+  product Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  values  ProductOptionValue[]
+
+  @@unique([productId, name])
+  @@map("product_options")
+}
+
+model ProductOptionValue {
+  id       String @id @default(uuid(7)) @db.Uuid
+  optionId String @map("option_id") @db.Uuid
+  value    String @db.VarChar(80)
+  position Int    @default(0)
+
+  option   ProductOption        @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  variants VariantOptionValue[]
+
+  @@unique([optionId, value])
+  @@map("product_option_values")
+}
+
+/// The purchasable unit (SKU). Prices live here, in the base currency.
+model ProductVariant {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  productId      String   @map("product_id") @db.Uuid
+  sku            String   @unique @db.VarChar(64)
+  /// Denormalised option label, e.g. "18K Yellow Gold / 7".
+  title          String   @db.VarChar(200)
+  price          Decimal  @db.Decimal(14, 2)
+  compareAtPrice Decimal? @map("compare_at_price") @db.Decimal(14, 2)
+  /// Staff-only. Must never be mapped into a storefront DTO.
+  costPrice      Decimal? @map("cost_price") @db.Decimal(14, 2)
+  weightGrams    Decimal? @map("weight_grams") @db.Decimal(10, 3)
+  barcode        String?  @db.VarChar(64)
+  trackInventory Boolean  @default(true) @map("track_inventory")
+  allowBackorder Boolean  @default(false) @map("allow_backorder")
+  isDefault      Boolean  @default(false) @map("is_default")
+  isActive       Boolean  @default(true) @map("is_active")
+  position       Int      @default(0)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  product         Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  optionValues    VariantOptionValue[]
+  media           ProductMedia[]
+  inventoryLevels InventoryLevel[]
+  reservations    InventoryReservation[]
+  movements       InventoryMovement[]
+  cartItems       CartItem[]
+  orderItems      OrderItem[]
+  wishlistItems   WishlistItem[]
+
+  @@index([productId, position])
+  @@map("product_variants")
+}
+
+model VariantOptionValue {
+  variantId     String @map("variant_id") @db.Uuid
+  optionValueId String @map("option_value_id") @db.Uuid
+
+  variant     ProductVariant     @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  /// An option value still used by a variant cannot be deleted.
+  optionValue ProductOptionValue @relation(fields: [optionValueId], references: [id], onDelete: Restrict)
+
+  @@id([variantId, optionValueId])
+  @@index([optionValueId])
+  @@map("variant_option_values")
+}
+
+model ProductMedia {
+  id        String  @id @default(uuid(7)) @db.Uuid
+  productId String  @map("product_id") @db.Uuid
+  assetId   String  @map("asset_id") @db.Uuid
+  /// Optional: image specific to one variant (e.g. rose gold vs white gold).
+  variantId String? @map("variant_id") @db.Uuid
+  position  Int     @default(0)
+  altText   String? @map("alt_text") @db.VarChar(300)
+
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  asset   MediaAsset      @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@unique([productId, assetId])
+  @@index([productId, position])
+  @@index([variantId])
+  @@index([assetId])
+  @@map("product_media")
+}
+
+model ProductCollection {
+  collectionId String   @map("collection_id") @db.Uuid
+  productId    String   @map("product_id") @db.Uuid
+  position     Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, productId])
+  @@index([productId])
+  @@map("product_collections")
+}
+
+// ============================================================================
+// INVENTORY  (available = on_hand - reserved, enforced >= 0 by CHECK)
+// ============================================================================
+
+model InventoryLocation {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  code         String   @unique @db.VarChar(32)
+  name         String   @db.VarChar(120)
+  /// Courier pickup / return address.
+  contactName  String?  @map("contact_name") @db.VarChar(120)
+  phone        String?  @db.VarChar(20)
+  addressLine1 String?  @map("address_line1") @db.VarChar(200)
+  addressLine2 String?  @map("address_line2") @db.VarChar(200)
+  cityId       String?  @map("city_id") @db.Uuid
+  isActive     Boolean  @default(true) @map("is_active")
+  /// Exactly one default location (partial unique index).
+  isDefault    Boolean  @default(false) @map("is_default")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  city         City?                  @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  levels       InventoryLevel[]
+  reservations InventoryReservation[]
+  movements    InventoryMovement[]
+
+  @@map("inventory_locations")
+}
+
+model InventoryLevel {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  variantId         String   @map("variant_id") @db.Uuid
+  locationId        String   @map("location_id") @db.Uuid
+  onHand            Int      @default(0) @map("on_hand")
+  reserved          Int      @default(0)
+  lowStockThreshold Int?     @map("low_stock_threshold")
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  variant  ProductVariant    @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  location InventoryLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@unique([variantId, locationId])
+  @@index([locationId])
+  @@map("inventory_levels")
+}
+
+enum ReservationStatus {
+  /// Stock is held for an order that is not yet fulfilled.
+  ACTIVE
+  /// Converted into a sale when the line shipped (on_hand and reserved both decremented).
+  COMMITTED
+  /// Released because the order was cancelled.
+  RELEASED
+  /// Released by the expiry job because an online payment never completed.
+  EXPIRED
+
+  @@map("reservation_status")
+}
+
+model InventoryReservation {
+  id          String            @id @default(uuid(7)) @db.Uuid
+  orderId     String            @map("order_id") @db.Uuid
+  orderItemId String            @unique @map("order_item_id") @db.Uuid
+  variantId   String            @map("variant_id") @db.Uuid
+  locationId  String            @map("location_id") @db.Uuid
+  quantity    Int
+  status      ReservationStatus @default(ACTIVE)
+  /// Null = held until the order is confirmed or cancelled (COD, bank transfer).
+  expiresAt   DateTime?         @map("expires_at") @db.Timestamptz(3)
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  order     Order             @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderItem OrderItem         @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  variant   ProductVariant    @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  location  InventoryLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@index([status, expiresAt])
+  @@index([orderId])
+  @@index([variantId, status])
+  @@map("inventory_reservations")
+}
+
+enum InventoryMovementType {
+  RECEIPT
+  ADJUSTMENT
+  RESERVE
+  RELEASE
+  SALE
+  RETURN_RESTOCK
+  DAMAGE
+  TRANSFER_IN
+  TRANSFER_OUT
+
+  @@map("inventory_movement_type")
+}
+
+/// Append-only stock ledger (UPDATE/DELETE blocked by trigger).
+model InventoryMovement {
+  id            String                @id @default(uuid(7)) @db.Uuid
+  variantId     String                @map("variant_id") @db.Uuid
+  locationId    String                @map("location_id") @db.Uuid
+  type          InventoryMovementType
+  onHandDelta   Int                   @map("on_hand_delta")
+  reservedDelta Int                   @default(0) @map("reserved_delta")
+  onHandAfter   Int                   @map("on_hand_after")
+  reservedAfter Int                   @map("reserved_after")
+  reason        String?               @db.VarChar(300)
+  /// "order" | "return" | "manual" | "transfer" | "import"
+  referenceType String?               @map("reference_type") @db.VarChar(32)
+  referenceId   String?               @map("reference_id") @db.VarChar(64)
+  actorId       String?               @map("actor_id") @db.Uuid
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  variant  ProductVariant    @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  location InventoryLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  actor    User?             @relation("InventoryMovementActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([variantId, createdAt(sort: Desc)])
+  @@index([referenceType, referenceId])
+  @@map("inventory_movements")
+}
+
+// ============================================================================
+// GEOGRAPHY & CUSTOMER ADDRESSES
+// ============================================================================
+
+/// Shipping zones group cities for rate calculation ("Lahore", "Major cities", "Rest of Pakistan").
+model ShippingZone {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  name        String   @db.VarChar(100)
+  countryCode String   @map("country_code") @db.Char(2)
+  /// Fallback zone for cities without an explicit zone (one per country, partial unique index).
+  isDefault   Boolean  @default(false) @map("is_default")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  cities City[]
+  rates  ShippingRate[]
+
+  @@map("shipping_zones")
+}
+
+/// Canonical city list. Couriers in Pakistan require their own city codes, mapped in CourierCityMapping.
+model City {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  name           String   @db.VarChar(100)
+  province       String?  @db.VarChar(100)
+  countryCode    String   @default("PK") @map("country_code") @db.Char(2)
+  zoneId         String?  @map("zone_id") @db.Uuid
+  isActive       Boolean  @default(true) @map("is_active")
+  isCodAvailable Boolean  @default(true) @map("is_cod_available")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  zone               ShippingZone?        @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  courierMappings    CourierCityMapping[]
+  addresses          Address[]
+  orderAddresses     OrderAddress[]
+  inventoryLocations InventoryLocation[]
+
+  @@unique([countryCode, name])
+  @@index([zoneId])
+  @@map("cities")
+}
+
+model CourierCityMapping {
+  id            String   @id @default(uuid(7)) @db.Uuid
+  cityId        String   @map("city_id") @db.Uuid
+  /// Shipping provider code: "tcs" | "leopards" | "postex" | "mnp" | "trax" | ...
+  carrierCode   String   @map("carrier_code") @db.VarChar(32)
+  externalCode  String   @map("external_code") @db.VarChar(64)
+  externalName  String?  @map("external_name") @db.VarChar(100)
+  isServiceable Boolean  @default(true) @map("is_serviceable")
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  city City @relation(fields: [cityId], references: [id], onDelete: Cascade)
+
+  @@unique([carrierCode, cityId])
+  @@index([carrierCode, externalCode])
+  @@map("courier_city_mappings")
+}
+
+/// Customer address book. Orders copy addresses into OrderAddress (immutable snapshot).
+model Address {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
+  label             String?  @db.VarChar(40)
+  fullName          String   @map("full_name") @db.VarChar(120)
+  phone             String   @db.VarChar(20)
+  line1             String   @db.VarChar(200)
+  line2             String?  @db.VarChar(200)
+  /// Locality / sector / town — standard in Pakistani addresses.
+  area              String?  @db.VarChar(120)
+  landmark          String?  @db.VarChar(160)
+  cityName          String   @map("city_name") @db.VarChar(100)
+  cityId            String?  @map("city_id") @db.Uuid
+  province          String?  @db.VarChar(100)
+  postalCode        String?  @map("postal_code") @db.VarChar(16)
+  countryCode       String   @default("PK") @map("country_code") @db.Char(2)
+  isDefaultShipping Boolean  @default(false) @map("is_default_shipping")
+  isDefaultBilling  Boolean  @default(false) @map("is_default_billing")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  city City? @relation(fields: [cityId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+// ============================================================================
+// CART  (prices are never stored on the cart — always re-read from variants)
+// ============================================================================
+
+enum CartStatus {
+  ACTIVE
+  CONVERTED
+  MERGED
+  ABANDONED
+
+  @@map("cart_status")
+}
+
+model Cart {
+  id         String     @id @default(uuid(7)) @db.Uuid
+  userId     String?    @map("user_id") @db.Uuid
+  /// SHA-256 of the guest cart cookie token. The raw token only exists in the httpOnly cookie.
+  tokenHash  String?    @unique @map("token_hash") @db.Char(64)
+  status     CartStatus @default(ACTIVE)
+  currency   String     @default("PKR") @db.Char(3)
+  couponCode String?    @map("coupon_code") @db.VarChar(40)
+  /// Captured at checkout start, used for abandoned-cart email only with consent.
+  email      String?    @db.VarChar(254)
+  expiresAt  DateTime?  @map("expires_at") @db.Timestamptz(3)
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user  User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CartItem[]
+  order Order?
+
+  @@index([userId, status])
+  @@index([status, updatedAt])
+  @@map("carts")
+}
+
+model CartItem {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  cartId          String   @map("cart_id") @db.Uuid
+  variantId       String   @map("variant_id") @db.Uuid
+  quantity        Int
+  personalization Json?
+  /// SHA-256(variantId + canonical personalization): identical lines merge, different engravings stay separate.
+  lineKey         String   @map("line_key") @db.Char(64)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  cart    Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([cartId, lineKey])
+  @@index([variantId])
+  @@map("cart_items")
+}
+
+// ============================================================================
+// ORDERS
+// ============================================================================
+
+enum OrderStatus {
+  /// Placed; awaiting online payment, bank-transfer verification or COD confirmation.
+  PENDING
+  /// Paused for manual/fraud review.
+  ON_HOLD
+  /// Payment captured, transfer verified or COD confirmed — ready for fulfilment.
+  CONFIRMED
+  /// Being prepared (QC, engraving, packing).
+  PROCESSING
+  COMPLETED
+  CANCELLED
+
+  @@map("order_status")
+}
+
+enum OrderPaymentStatus {
+  UNPAID
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  PARTIALLY_REFUNDED
+  REFUNDED
+  VOIDED
+
+  @@map("order_payment_status")
+}
+
+enum FulfillmentStatus {
+  UNFULFILLED
+  PARTIALLY_SHIPPED
+  SHIPPED
+  PARTIALLY_DELIVERED
+  DELIVERED
+  /// Courier could not deliver and returned the parcel (RTO).
+  RETURNED_TO_SENDER
+
+  @@map("fulfillment_status")
+}
+
+enum CodVerificationStatus {
+  NOT_REQUIRED
+  PENDING
+  VERIFIED
+  REJECTED
+
+  @@map("cod_verification_status")
+}
+
+enum OrderSource {
+  STOREFRONT
+  ADMIN
+
+  @@map("order_source")
+}
+
+model Order {
+  id                    String                @id @default(uuid(7)) @db.Uuid
+  /// Human-facing number, rendered as "NV-100001". Sequence starts at 100001.
+  number                Int                   @unique @default(autoincrement())
+  userId                String?               @map("user_id") @db.Uuid
+  cartId                String?               @unique @map("cart_id") @db.Uuid
+  email                 String                @db.VarChar(254)
+  phone                 String                @db.VarChar(20)
+  status                OrderStatus           @default(PENDING)
+  paymentStatus         OrderPaymentStatus    @default(UNPAID) @map("payment_status")
+  fulfillmentStatus     FulfillmentStatus     @default(UNFULFILLED) @map("fulfillment_status")
+  codVerificationStatus CodVerificationStatus @default(NOT_REQUIRED) @map("cod_verification_status")
+  source                OrderSource           @default(STOREFRONT)
+  currency              String                @default("PKR") @db.Char(3)
+  subtotal              Decimal               @db.Decimal(14, 2)
+  discountTotal         Decimal               @default(0) @map("discount_total") @db.Decimal(14, 2)
+  shippingTotal         Decimal               @default(0) @map("shipping_total") @db.Decimal(14, 2)
+  taxTotal              Decimal               @default(0) @map("tax_total") @db.Decimal(14, 2)
+  /// Payment-method fees, e.g. a COD handling fee.
+  feeTotal              Decimal               @default(0) @map("fee_total") @db.Decimal(14, 2)
+  /// total = subtotal - discount + shipping + fees (+ tax when prices exclude tax). Enforced by CHECK.
+  total                 Decimal               @db.Decimal(14, 2)
+  pricesIncludeTax      Boolean               @default(true) @map("prices_include_tax")
+  /// Payment provider chosen at checkout (snapshot of PaymentMethod.providerCode).
+  paymentMethodCode     String                @map("payment_method_code") @db.VarChar(40)
+  shippingMethodCode    String?               @map("shipping_method_code") @db.VarChar(40)
+  shippingMethodName    String?               @map("shipping_method_name") @db.VarChar(120)
+  couponId              String?               @map("coupon_id") @db.Uuid
+  couponCode            String?               @map("coupon_code") @db.VarChar(40)
+  isGift                Boolean               @default(false) @map("is_gift")
+  giftMessage           String?               @map("gift_message") @db.VarChar(500)
+  customerNote          String?               @map("customer_note") @db.VarChar(1000)
+  /// Consent-gated marketing attribution captured at checkout: UTM params, landing page, referrer,
+  /// GA client id, Meta fbp/fbc. Feeds server-side conversions (GA4 MP, Meta CAPI) and sales-by-channel reports.
+  attribution           Json?
+  ipAddress             String?               @map("ip_address") @db.VarChar(45)
+  userAgent             String?               @map("user_agent") @db.Text
+  placedAt              DateTime              @default(now()) @map("placed_at") @db.Timestamptz(3)
+  confirmedAt           DateTime?             @map("confirmed_at") @db.Timestamptz(3)
+  completedAt           DateTime?             @map("completed_at") @db.Timestamptz(3)
+  cancelledAt           DateTime?             @map("cancelled_at") @db.Timestamptz(3)
+  cancelReason          String?               @map("cancel_reason") @db.VarChar(500)
+  /// Optimistic-concurrency counter, bumped on every state transition.
+  version               Int                   @default(0)
+  createdAt             DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user             User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  cart             Cart?                  @relation(fields: [cartId], references: [id], onDelete: SetNull)
+  coupon           Coupon?                @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  items            OrderItem[]
+  addresses        OrderAddress[]
+  events           OrderEvent[]
+  payments         Payment[]
+  refunds          Refund[]
+  shipments        Shipment[]
+  returns          Return[]
+  reservations     InventoryReservation[]
+  couponRedemption CouponRedemption?
+
+  @@index([userId, placedAt(sort: Desc)])
+  @@index([status, placedAt(sort: Desc)])
+  @@index([paymentStatus])
+  @@index([fulfillmentStatus])
+  @@index([email])
+  @@index([phone])
+  @@index([placedAt(sort: Desc)])
+  @@map("orders")
+}
+
+/// Immutable snapshot of what was sold. Catalog edits never change these rows.
+model OrderItem {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  orderId           String   @map("order_id") @db.Uuid
+  productId         String?  @map("product_id") @db.Uuid
+  variantId         String?  @map("variant_id") @db.Uuid
+  sku               String   @db.VarChar(64)
+  productName       String   @map("product_name") @db.VarChar(200)
+  variantTitle      String?  @map("variant_title") @db.VarChar(200)
+  imageUrl          String?  @map("image_url") @db.VarChar(2048)
+  unitPrice         Decimal  @map("unit_price") @db.Decimal(14, 2)
+  compareAtPrice    Decimal? @map("compare_at_price") @db.Decimal(14, 2)
+  quantity          Int
+  /// Order-level discounts allocated to this line.
+  discountTotal     Decimal  @default(0) @map("discount_total") @db.Decimal(14, 2)
+  taxTotal          Decimal  @default(0) @map("tax_total") @db.Decimal(14, 2)
+  lineTotal         Decimal  @map("line_total") @db.Decimal(14, 2)
+  personalization   Json?
+  quantityFulfilled Int      @default(0) @map("quantity_fulfilled")
+  quantityReturned  Int      @default(0) @map("quantity_returned")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  order         Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product       Product?              @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant       ProductVariant?       @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  reservation   InventoryReservation?
+  shipmentItems ShipmentItem[]
+  returnItems   ReturnItem[]
+  review        Review?
+
+  @@index([orderId])
+  @@index([variantId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+enum AddressType {
+  SHIPPING
+  BILLING
+
+  @@map("address_type")
+}
+
+model OrderAddress {
+  id          String      @id @default(uuid(7)) @db.Uuid
+  orderId     String      @map("order_id") @db.Uuid
+  type        AddressType
+  fullName    String      @map("full_name") @db.VarChar(120)
+  phone       String      @db.VarChar(20)
+  line1       String      @db.VarChar(200)
+  line2       String?     @db.VarChar(200)
+  area        String?     @db.VarChar(120)
+  landmark    String?     @db.VarChar(160)
+  cityName    String      @map("city_name") @db.VarChar(100)
+  cityId      String?     @map("city_id") @db.Uuid
+  province    String?     @db.VarChar(100)
+  postalCode  String?     @map("postal_code") @db.VarChar(16)
+  countryCode String      @default("PK") @map("country_code") @db.Char(2)
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  city  City? @relation(fields: [cityId], references: [id], onDelete: SetNull)
+
+  @@unique([orderId, type])
+  @@map("order_addresses")
+}
+
+/// Order timeline (append-only). Drives the admin timeline and the customer tracking page.
+model OrderEvent {
+  id                String    @id @default(uuid(7)) @db.Uuid
+  orderId           String    @map("order_id") @db.Uuid
+  /// "status_changed" | "payment_captured" | "shipment_booked" | "note" | ...
+  type              String    @db.VarChar(64)
+  message           String?   @db.Text
+  fromStatus        String?   @map("from_status") @db.VarChar(32)
+  toStatus          String?   @map("to_status") @db.VarChar(32)
+  isCustomerVisible Boolean   @default(false) @map("is_customer_visible")
+  actorType         ActorType @map("actor_type")
+  actorId           String?   @map("actor_id") @db.Uuid
+  metadata          Json?
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actor User? @relation("OrderEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([orderId, createdAt])
+  @@map("order_events")
+}
+
+// ============================================================================
+// PAYMENTS & REFUNDS  (provider-agnostic: providers are identified by code)
+// ============================================================================
+
+enum PaymentMethodType {
+  CASH_ON_DELIVERY
+  BANK_TRANSFER
+  CARD
+  MOBILE_WALLET
+  BNPL
+  OTHER
+
+  @@map("payment_method_type")
+}
+
+enum PaymentStatus {
+  /// Created, provider not yet contacted.
+  PENDING
+  /// Customer must act: hosted page redirect, wallet approval, OTP.
+  REQUIRES_ACTION
+  /// Bank-transfer proof submitted; staff must verify.
+  AWAITING_VERIFICATION
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  CANCELLED
+  EXPIRED
+  PARTIALLY_REFUNDED
+  REFUNDED
+
+  @@map("payment_status")
+}
+
+/// Admin-managed, NON-SECRET settings for each payment provider registered in code.
+/// Credentials live only in environment variables / the secret manager.
+model PaymentMethod {
+  id            String            @id @default(uuid(7)) @db.Uuid
+  /// Must match a provider registered in packages/core/src/payments/registry.ts.
+  providerCode  String            @unique @map("provider_code") @db.VarChar(40)
+  type          PaymentMethodType
+  displayName   String            @map("display_name") @db.VarChar(80)
+  description   String?           @db.VarChar(500)
+  /// Public instructions shown after checkout, e.g. bank account title + IBAN for transfers.
+  instructions  String?           @db.Text
+  isEnabled     Boolean           @default(false) @map("is_enabled")
+  position      Int               @default(0)
+  minOrderTotal Decimal?          @map("min_order_total") @db.Decimal(14, 2)
+  maxOrderTotal Decimal?          @map("max_order_total") @db.Decimal(14, 2)
+  feeFixed      Decimal           @default(0) @map("fee_fixed") @db.Decimal(14, 2)
+  feePercent    Decimal           @default(0) @map("fee_percent") @db.Decimal(5, 2)
+  /// Non-secret provider options validated by the provider's own zod schema.
+  settings      Json?
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("payment_methods")
+}
+
+/// One attempt to collect money for an order. An order may have several
+/// (a failed card attempt followed by COD, or an advance + COD balance).
+model Payment {
+  id                    String            @id @default(uuid(7)) @db.Uuid
+  orderId               String            @map("order_id") @db.Uuid
+  providerCode          String            @map("provider_code") @db.VarChar(40)
+  methodType            PaymentMethodType @map("method_type")
+  status                PaymentStatus     @default(PENDING)
+  amount                Decimal           @db.Decimal(14, 2)
+  amountCaptured        Decimal           @default(0) @map("amount_captured") @db.Decimal(14, 2)
+  amountRefunded        Decimal           @default(0) @map("amount_refunded") @db.Decimal(14, 2)
+  currency              String            @db.Char(3)
+  /// Our merchant reference sent to the provider (unique per provider).
+  providerReference     String?           @map("provider_reference") @db.VarChar(128)
+  /// The provider's own transaction id, once known.
+  providerTransactionId String?           @map("provider_transaction_id") @db.VarChar(128)
+  idempotencyKey        String            @unique @map("idempotency_key") @db.VarChar(128)
+  /// e.g. the bank transfer reference typed by the customer.
+  customerReference     String?           @map("customer_reference") @db.VarChar(128)
+  /// PRIVATE media asset (bank-transfer receipt).
+  proofAssetId          String?           @map("proof_asset_id") @db.Uuid
+  failureCode           String?           @map("failure_code") @db.VarChar(64)
+  failureMessage        String?           @map("failure_message") @db.VarChar(500)
+  /// Redacted provider data. Never card numbers, CVV, wallet PINs or credentials.
+  metadata              Json?
+  expiresAt             DateTime?         @map("expires_at") @db.Timestamptz(3)
+  authorizedAt          DateTime?         @map("authorized_at") @db.Timestamptz(3)
+  capturedAt            DateTime?         @map("captured_at") @db.Timestamptz(3)
+  failedAt              DateTime?         @map("failed_at") @db.Timestamptz(3)
+  cancelledAt           DateTime?         @map("cancelled_at") @db.Timestamptz(3)
+  /// Staff member who verified a bank transfer or recorded COD collection.
+  verifiedById          String?           @map("verified_by_id") @db.Uuid
+  verifiedAt            DateTime?         @map("verified_at") @db.Timestamptz(3)
+  version               Int               @default(0)
+  createdAt             DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  order      Order          @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  proofAsset MediaAsset?    @relation("PaymentProof", fields: [proofAssetId], references: [id], onDelete: SetNull)
+  verifiedBy User?          @relation("PaymentVerifiedBy", fields: [verifiedById], references: [id], onDelete: SetNull)
+  events     PaymentEvent[]
+  refunds    Refund[]
+
+  @@unique([providerCode, providerReference])
+  @@index([orderId])
+  @@index([status, expiresAt])
+  @@index([providerCode, providerTransactionId])
+  @@map("payments")
+}
+
+/// Append-only payment ledger: every initiation, redirect return, webhook, inquiry and transition.
+model PaymentEvent {
+  id         String         @id @default(uuid(7)) @db.Uuid
+  paymentId  String         @map("payment_id") @db.Uuid
+  /// "initiated" | "return" | "webhook" | "status_inquiry" | "manual_verification" | "refund"
+  type       String         @db.VarChar(64)
+  fromStatus PaymentStatus? @map("from_status")
+  toStatus   PaymentStatus? @map("to_status")
+  actorType  ActorType      @map("actor_type")
+  /// Redacted provider payload.
+  payload    Json?
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId, createdAt])
+  @@map("payment_events")
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+
+  @@map("refund_status")
+}
+
+enum RefundMethod {
+  /// Back through the gateway API (card / wallet).
+  ORIGINAL_PAYMENT
+  /// Manual transfer to the customer's bank account (typical for COD orders).
+  BANK_TRANSFER
+  STORE_CREDIT
+  CASH
+
+  @@map("refund_method")
+}
+
+model Refund {
+  id                     String       @id @default(uuid(7)) @db.Uuid
+  orderId                String       @map("order_id") @db.Uuid
+  paymentId              String       @map("payment_id") @db.Uuid
+  returnId               String?      @map("return_id") @db.Uuid
+  amount                 Decimal      @db.Decimal(14, 2)
+  currency               String       @db.Char(3)
+  method                 RefundMethod
+  status                 RefundStatus @default(PENDING)
+  reason                 String?      @db.VarChar(500)
+  providerRefundId       String?      @map("provider_refund_id") @db.VarChar(128)
+  /// e.g. the bank reference of a manual refund transfer.
+  externalReference      String?      @map("external_reference") @db.VarChar(128)
+  /// Customer payout details (IBAN, account title) for manual refunds.
+  /// AES-256-GCM encrypted at the application layer with DATA_ENCRYPTION_KEY.
+  payoutDetailsEncrypted String?      @map("payout_details_encrypted") @db.Text
+  idempotencyKey         String       @unique @map("idempotency_key") @db.VarChar(128)
+  failureReason          String?      @map("failure_reason") @db.VarChar(500)
+  initiatedById          String?      @map("initiated_by_id") @db.Uuid
+  processedAt            DateTime?    @map("processed_at") @db.Timestamptz(3)
+  createdAt              DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  payment     Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  return      Return? @relation(fields: [returnId], references: [id], onDelete: SetNull)
+  initiatedBy User?   @relation("RefundInitiatedBy", fields: [initiatedById], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([paymentId])
+  @@index([status])
+  @@map("refunds")
+}
+
+// ============================================================================
+// COUPONS
+// ============================================================================
+
+enum CouponType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  FREE_SHIPPING
+
+  @@map("coupon_type")
+}
+
+enum CouponScope {
+  ALL
+  PRODUCTS
+  CATEGORIES
+  COLLECTIONS
+
+  @@map("coupon_scope")
+}
+
+enum RedemptionStatus {
+  APPLIED
+  /// Order cancelled before fulfilment; usage released.
+  REVERSED
+
+  @@map("redemption_status")
+}
+
+model Coupon {
+  id                    String      @id @default(uuid(7)) @db.Uuid
+  /// Upper-case, [A-Z0-9_-]{3,40} (CHECK).
+  code                  String      @unique @db.VarChar(40)
+  description           String?     @db.VarChar(300)
+  type                  CouponType
+  /// Percentage (0-100] for PERCENTAGE, amount for FIXED_AMOUNT, 0 for FREE_SHIPPING.
+  value                 Decimal     @db.Decimal(14, 2)
+  scope                 CouponScope @default(ALL)
+  minSubtotal           Decimal?    @map("min_subtotal") @db.Decimal(14, 2)
+  maxDiscount           Decimal?    @map("max_discount") @db.Decimal(14, 2)
+  startsAt              DateTime?   @map("starts_at") @db.Timestamptz(3)
+  endsAt                DateTime?   @map("ends_at") @db.Timestamptz(3)
+  usageLimit            Int?        @map("usage_limit")
+  usageLimitPerCustomer Int?        @map("usage_limit_per_customer")
+  /// Incremented with a conditional UPDATE inside the order transaction (never read-then-write).
+  usageCount            Int         @default(0) @map("usage_count")
+  firstOrderOnly        Boolean     @default(false) @map("first_order_only")
+  excludeSaleItems      Boolean     @default(true) @map("exclude_sale_items")
+  isActive              Boolean     @default(true) @map("is_active")
+  createdAt             DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  products    CouponProduct[]
+  categories  CouponCategory[]
+  collections CouponCollection[]
+  redemptions CouponRedemption[]
+  orders      Order[]
+
+  @@index([isActive, endsAt])
+  @@map("coupons")
+}
+
+model CouponProduct {
+  couponId  String @map("coupon_id") @db.Uuid
+  productId String @map("product_id") @db.Uuid
+
+  coupon  Coupon  @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, productId])
+  @@index([productId])
+  @@map("coupon_products")
+}
+
+model CouponCategory {
+  couponId   String @map("coupon_id") @db.Uuid
+  categoryId String @map("category_id") @db.Uuid
+
+  coupon   Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, categoryId])
+  @@index([categoryId])
+  @@map("coupon_categories")
+}
+
+model CouponCollection {
+  couponId     String @map("coupon_id") @db.Uuid
+  collectionId String @map("collection_id") @db.Uuid
+
+  coupon     Coupon     @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, collectionId])
+  @@index([collectionId])
+  @@map("coupon_collections")
+}
+
+model CouponRedemption {
+  id             String           @id @default(uuid(7)) @db.Uuid
+  couponId       String           @map("coupon_id") @db.Uuid
+  orderId        String           @unique @map("order_id") @db.Uuid
+  userId         String?          @map("user_id") @db.Uuid
+  /// Lower-case; used for per-customer limits on guest orders.
+  email          String           @db.VarChar(254)
+  discountAmount Decimal          @map("discount_amount") @db.Decimal(14, 2)
+  status         RedemptionStatus @default(APPLIED)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  reversedAt     DateTime?        @map("reversed_at") @db.Timestamptz(3)
+
+  /// A coupon that has been used cannot be deleted — deactivate it instead.
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Restrict)
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([couponId, email])
+  @@index([couponId, userId])
+  @@map("coupon_redemptions")
+}
+
+// ============================================================================
+// REVIEWS & WISHLIST
+// ============================================================================
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+
+  @@map("review_status")
+}
+
+model Review {
+  id                 String       @id @default(uuid(7)) @db.Uuid
+  productId          String       @map("product_id") @db.Uuid
+  userId             String       @map("user_id") @db.Uuid
+  /// Links the review to a delivered order line (verified purchase).
+  orderItemId        String?      @unique @map("order_item_id") @db.Uuid
+  rating             Int          @db.SmallInt
+  title              String?      @db.VarChar(150)
+  /// Plain text only (no HTML). Max 5000 chars (CHECK).
+  body               String       @db.Text
+  status             ReviewStatus @default(PENDING)
+  isVerifiedPurchase Boolean      @default(false) @map("is_verified_purchase")
+  moderatedById      String?      @map("moderated_by_id") @db.Uuid
+  moderatedAt        DateTime?    @map("moderated_at") @db.Timestamptz(3)
+  moderationNote     String?      @map("moderation_note") @db.VarChar(500)
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  product     Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user        User       @relation("ReviewAuthor", fields: [userId], references: [id], onDelete: Cascade)
+  orderItem   OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  moderatedBy User?      @relation("ReviewModeratedBy", fields: [moderatedById], references: [id], onDelete: SetNull)
+
+  @@unique([productId, userId])
+  @@index([productId, status, createdAt(sort: Desc)])
+  @@index([status, createdAt])
+  @@map("reviews")
+}
+
+model WishlistItem {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  /// Preferred variant, if the customer picked one.
+  variantId String?  @map("variant_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, productId])
+  @@index([productId])
+  @@map("wishlist_items")
+}
+
+// ============================================================================
+// RETURNS
+// ============================================================================
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  IN_TRANSIT
+  RECEIVED
+  COMPLETED
+  CANCELLED
+
+  @@map("return_status")
+}
+
+enum ReturnReason {
+  DAMAGED
+  DEFECTIVE
+  WRONG_ITEM
+  NOT_AS_DESCRIBED
+  SIZE_FIT
+  CHANGED_MIND
+  OTHER
+
+  @@map("return_reason")
+}
+
+enum ReturnResolution {
+  REFUND
+  EXCHANGE
+  STORE_CREDIT
+  REPAIR
+
+  @@map("return_resolution")
+}
+
+enum ItemCondition {
+  NEW
+  LIKE_NEW
+  DAMAGED
+  UNSALEABLE
+
+  @@map("item_condition")
+}
+
+model Return {
+  id              String           @id @default(uuid(7)) @db.Uuid
+  /// Rendered as "RT-10001".
+  number          Int              @unique @default(autoincrement())
+  orderId         String           @map("order_id") @db.Uuid
+  userId          String?          @map("user_id") @db.Uuid
+  status          ReturnStatus     @default(REQUESTED)
+  resolution      ReturnResolution @default(REFUND)
+  customerNote    String?          @map("customer_note") @db.Text
+  staffNote       String?          @map("staff_note") @db.Text
+  rejectionReason String?          @map("rejection_reason") @db.VarChar(500)
+  requestedAt     DateTime         @default(now()) @map("requested_at") @db.Timestamptz(3)
+  approvedAt      DateTime?        @map("approved_at") @db.Timestamptz(3)
+  receivedAt      DateTime?        @map("received_at") @db.Timestamptz(3)
+  completedAt     DateTime?        @map("completed_at") @db.Timestamptz(3)
+  cancelledAt     DateTime?        @map("cancelled_at") @db.Timestamptz(3)
+  version         Int              @default(0)
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  order     Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user      User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  items     ReturnItem[]
+  refunds   Refund[]
+  shipments Shipment[]
+
+  @@index([orderId])
+  @@index([status, requestedAt])
+  @@map("returns")
+}
+
+model ReturnItem {
+  id           String         @id @default(uuid(7)) @db.Uuid
+  returnId     String         @map("return_id") @db.Uuid
+  orderItemId  String         @map("order_item_id") @db.Uuid
+  quantity     Int
+  reason       ReturnReason
+  reasonDetail String?        @map("reason_detail") @db.VarChar(500)
+  /// Set at inspection.
+  condition    ItemCondition?
+  restock      Boolean        @default(false)
+  restockedAt  DateTime?      @map("restocked_at") @db.Timestamptz(3)
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  return    Return    @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+
+  @@unique([returnId, orderItemId])
+  @@index([orderItemId])
+  @@map("return_items")
+}
+
+// ============================================================================
+// SHIPPING  (provider-agnostic: couriers are identified by carrier code)
+// ============================================================================
+
+model ShippingMethod {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  /// "standard" | "express" | "insured-express" | "store-pickup"
+  code              String   @unique @db.VarChar(40)
+  name              String   @db.VarChar(120)
+  description       String?  @db.VarChar(500)
+  /// Preferred courier for bookings made with this method (null = choose at fulfilment).
+  carrierCode       String?  @map("carrier_code") @db.VarChar(32)
+  minDeliveryDays   Int?     @map("min_delivery_days")
+  maxDeliveryDays   Int?     @map("max_delivery_days")
+  isInsured         Boolean  @default(false) @map("is_insured")
+  requiresSignature Boolean  @default(false) @map("requires_signature")
+  isActive          Boolean  @default(true) @map("is_active")
+  position          Int      @default(0)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  rates ShippingRate[]
+
+  @@map("shipping_methods")
+}
+
+/// A price for (zone, method), optionally bounded by subtotal / weight. Most specific match wins.
+model ShippingRate {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  zoneId            String   @map("zone_id") @db.Uuid
+  methodId          String   @map("method_id") @db.Uuid
+  price             Decimal  @db.Decimal(14, 2)
+  minSubtotal       Decimal? @map("min_subtotal") @db.Decimal(14, 2)
+  maxSubtotal       Decimal? @map("max_subtotal") @db.Decimal(14, 2)
+  minWeightGrams    Int?     @map("min_weight_grams")
+  maxWeightGrams    Int?     @map("max_weight_grams")
+  freeAboveSubtotal Decimal? @map("free_above_subtotal") @db.Decimal(14, 2)
+  isActive          Boolean  @default(true) @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  zone   ShippingZone   @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  method ShippingMethod @relation(fields: [methodId], references: [id], onDelete: Cascade)
+
+  @@index([zoneId, methodId, isActive])
+  @@index([methodId])
+  @@map("shipping_rates")
+}
+
+enum ShipmentDirection {
+  OUTBOUND
+  RETURN
+
+  @@map("shipment_direction")
+}
+
+enum ShipmentStatus {
+  PENDING
+  BOOKED
+  PICKED_UP
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DELIVERY_FAILED
+  RETURNING
+  RETURNED_TO_SENDER
+  CANCELLED
+  EXCEPTION
+
+  @@map("shipment_status")
+}
+
+model Shipment {
+  id                    String            @id @default(uuid(7)) @db.Uuid
+  orderId               String            @map("order_id") @db.Uuid
+  /// Set for reverse-logistics pickups.
+  returnId              String?           @map("return_id") @db.Uuid
+  direction             ShipmentDirection @default(OUTBOUND)
+  carrierCode           String            @map("carrier_code") @db.VarChar(32)
+  serviceCode           String?           @map("service_code") @db.VarChar(40)
+  status                ShipmentStatus    @default(PENDING)
+  trackingNumber        String?           @map("tracking_number") @db.VarChar(64)
+  /// PRIVATE media asset holding the airway bill / label PDF.
+  labelAssetId          String?           @map("label_asset_id") @db.Uuid
+  /// Cash the courier must collect (0 for prepaid orders).
+  codAmount             Decimal           @default(0) @map("cod_amount") @db.Decimal(14, 2)
+  declaredValue         Decimal           @map("declared_value") @db.Decimal(14, 2)
+  weightGrams           Int?              @map("weight_grams")
+  pieces                Int               @default(1)
+  /// Prevents double-booking with the courier when a request is retried.
+  bookingIdempotencyKey String            @unique @map("booking_idempotency_key") @db.VarChar(128)
+  /// Redacted courier response.
+  carrierMetadata       Json?             @map("carrier_metadata")
+  lastError             String?           @map("last_error") @db.Text
+  bookedAt              DateTime?         @map("booked_at") @db.Timestamptz(3)
+  shippedAt             DateTime?         @map("shipped_at") @db.Timestamptz(3)
+  deliveredAt           DateTime?         @map("delivered_at") @db.Timestamptz(3)
+  cancelledAt           DateTime?         @map("cancelled_at") @db.Timestamptz(3)
+  lastSyncedAt          DateTime?         @map("last_synced_at") @db.Timestamptz(3)
+  /// When the tracking poller should next query the courier (couriers without webhooks).
+  nextSyncAt            DateTime?         @map("next_sync_at") @db.Timestamptz(3)
+  version               Int               @default(0)
+  createdAt             DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  order      Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  return     Return?         @relation(fields: [returnId], references: [id], onDelete: SetNull)
+  labelAsset MediaAsset?     @relation("ShipmentLabel", fields: [labelAssetId], references: [id], onDelete: SetNull)
+  items      ShipmentItem[]
+  events     ShipmentEvent[]
+
+  @@unique([carrierCode, trackingNumber])
+  @@index([orderId])
+  @@index([returnId])
+  @@index([status, nextSyncAt])
+  @@map("shipments")
+}
+
+model ShipmentItem {
+  shipmentId  String @map("shipment_id") @db.Uuid
+  orderItemId String @map("order_item_id") @db.Uuid
+  quantity    Int
+
+  shipment  Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+
+  @@id([shipmentId, orderItemId])
+  @@index([orderItemId])
+  @@map("shipment_items")
+}
+
+model ShipmentEvent {
+  id            String         @id @default(uuid(7)) @db.Uuid
+  shipmentId    String         @map("shipment_id") @db.Uuid
+  /// Normalised status.
+  status        ShipmentStatus
+  /// Courier's raw status code/text.
+  carrierStatus String         @map("carrier_status") @db.VarChar(100)
+  description   String?        @db.VarChar(500)
+  location      String?        @db.VarChar(120)
+  occurredAt    DateTime       @map("occurred_at") @db.Timestamptz(3)
+  /// SHA-256(occurredAt + carrierStatus + location) — tracking polls are idempotent.
+  dedupeKey     String         @map("dedupe_key") @db.Char(64)
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@unique([shipmentId, dedupeKey])
+  @@index([shipmentId, occurredAt])
+  @@map("shipment_events")
+}
+
+// ============================================================================
+// NOTIFICATIONS & MARKETING
+// ============================================================================
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+  IN_APP
+
+  @@map("notification_channel")
+}
+
+enum NotificationStatus {
+  PENDING
+  SENDING
+  SENT
+  DELIVERED
+  FAILED
+  /// Not sent: recipient opted out, bounced or complained.
+  SUPPRESSED
+
+  @@map("notification_status")
+}
+
+/// Every outbound message, its delivery state, and its idempotency key.
+model Notification {
+  id                String              @id @default(uuid(7)) @db.Uuid
+  userId            String?             @map("user_id") @db.Uuid
+  channel           NotificationChannel
+  /// Email address or E.164 phone number.
+  recipient         String              @db.VarChar(254)
+  /// Template key, e.g. "order.confirmed", "shipment.dispatched", "auth.password_reset".
+  template          String              @db.VarChar(80)
+  locale            String              @default("en") @db.VarChar(10)
+  subject           String?             @db.VarChar(255)
+  /// Template variables. No secrets: password-reset links are rendered at send time and not stored.
+  payload           Json
+  status            NotificationStatus  @default(PENDING)
+  provider          String?             @db.VarChar(32)
+  providerMessageId String?             @map("provider_message_id") @db.VarChar(191)
+  attempts          Int                 @default(0)
+  lastError         String?             @map("last_error") @db.Text
+  /// e.g. "order.confirmed:<orderId>:EMAIL" — guarantees at-most-once per business event.
+  dedupeKey         String              @unique @map("dedupe_key") @db.VarChar(191)
+  scheduledAt       DateTime            @default(now()) @map("scheduled_at") @db.Timestamptz(3)
+  sentAt            DateTime?           @map("sent_at") @db.Timestamptz(3)
+  deliveredAt       DateTime?           @map("delivered_at") @db.Timestamptz(3)
+  readAt            DateTime?           @map("read_at") @db.Timestamptz(3)
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status, scheduledAt])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([provider, providerMessageId])
+  @@map("notifications")
+}
+
+enum SubscriberStatus {
+  /// Awaiting double opt-in confirmation.
+  PENDING
+  SUBSCRIBED
+  UNSUBSCRIBED
+  BOUNCED
+  COMPLAINED
+
+  @@map("subscriber_status")
+}
+
+model NewsletterSubscriber {
+  id                    String           @id @default(uuid(7)) @db.Uuid
+  /// Lower-case (CHECK).
+  email                 String           @unique @db.VarChar(254)
+  userId                String?          @unique @map("user_id") @db.Uuid
+  status                SubscriberStatus @default(PENDING)
+  /// "footer" | "checkout" | "account" | "popup" | "import"
+  source                String           @db.VarChar(32)
+  /// SHA-256 of the double opt-in token (the raw token is only in the email link).
+  confirmTokenHash      String?          @unique @map("confirm_token_hash") @db.Char(64)
+  confirmTokenExpiresAt DateTime?        @map("confirm_token_expires_at") @db.Timestamptz(3)
+  /// Consent evidence.
+  consentText           String?          @map("consent_text") @db.VarChar(500)
+  consentIp             String?          @map("consent_ip") @db.VarChar(45)
+  consentedAt           DateTime?        @map("consented_at") @db.Timestamptz(3)
+  confirmedAt           DateTime?        @map("confirmed_at") @db.Timestamptz(3)
+  unsubscribedAt        DateTime?        @map("unsubscribed_at") @db.Timestamptz(3)
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("newsletter_subscribers")
+}
+
+// ============================================================================
+// PLATFORM: AUDIT, OUTBOX, IDEMPOTENCY, WEBHOOKS, SETTINGS
+// ============================================================================
+
+/// Append-only (trigger blocks UPDATE/DELETE, except actor_id → NULL when a user is deleted).
+model AuditLog {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  actorType  ActorType @map("actor_type")
+  actorId    String?   @map("actor_id") @db.Uuid
+  /// "order.cancel", "refund.create", "product.update", "role.assign", "auth.sign_in_failed", ...
+  action     String    @db.VarChar(100)
+  entityType String    @map("entity_type") @db.VarChar(64)
+  entityId   String?   @map("entity_id") @db.VarChar(64)
+  /// { before, after } with secrets and PII redacted.
+  changes    Json?
+  metadata   Json?
+  ipAddress  String?   @map("ip_address") @db.VarChar(45)
+  userAgent  String?   @map("user_agent") @db.Text
+  requestId  String?   @map("request_id") @db.VarChar(64)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId, createdAt(sort: Desc)])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  DONE
+  /// Exceeded max attempts; needs a human.
+  DEAD
+
+  @@map("outbox_status")
+}
+
+/// Transactional outbox: written in the same transaction as the state change,
+/// dispatched afterwards (emails, analytics, courier booking, cache revalidation).
+model OutboxEvent {
+  id            String       @id @default(uuid(7)) @db.Uuid
+  /// "order.placed" | "payment.captured" | "shipment.delivered" | ...
+  type          String       @db.VarChar(100)
+  aggregateType String       @map("aggregate_type") @db.VarChar(64)
+  aggregateId   String       @map("aggregate_id") @db.VarChar(64)
+  payload       Json
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  availableAt   DateTime     @default(now()) @map("available_at") @db.Timestamptz(3)
+  lockedAt      DateTime?    @map("locked_at") @db.Timestamptz(3)
+  lockedBy      String?      @map("locked_by") @db.VarChar(64)
+  lastError     String?      @map("last_error") @db.Text
+  processedAt   DateTime?    @map("processed_at") @db.Timestamptz(3)
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([aggregateType, aggregateId])
+  @@index([status, lockedAt])
+  @@map("outbox_events")
+}
+
+enum IdempotencyStatus {
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+
+  @@map("idempotency_status")
+}
+
+/// Server-side idempotency for non-repeatable commands (place order, initiate payment, refund).
+model IdempotencyKey {
+  id             String            @id @default(uuid(7)) @db.Uuid
+  /// "checkout.place_order" | "payment.initiate" | "refund.create" | ...
+  scope          String            @db.VarChar(64)
+  key            String            @db.VarChar(128)
+  /// Owner of the key (user id or cart id) — a key cannot be replayed by someone else.
+  subject        String?           @db.VarChar(128)
+  /// SHA-256 of the canonical request; same key + different body = 422.
+  requestHash    String            @map("request_hash") @db.Char(64)
+  status         IdempotencyStatus @default(IN_PROGRESS)
+  responseStatus Int?              @map("response_status")
+  responseBody   Json?             @map("response_body")
+  resourceType   String?           @map("resource_type") @db.VarChar(64)
+  resourceId     String?           @map("resource_id") @db.VarChar(64)
+  lockedUntil    DateTime?         @map("locked_until") @db.Timestamptz(3)
+  expiresAt      DateTime          @map("expires_at") @db.Timestamptz(3)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([scope, key])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  IGNORED
+  FAILED
+
+  @@map("webhook_status")
+}
+
+/// Inbound webhooks that passed signature verification. Unverified requests are rejected and never stored.
+model WebhookEvent {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  /// "payment" | "shipping" | "email"
+  source      String        @db.VarChar(32)
+  provider    String        @db.VarChar(40)
+  /// Provider event id, or SHA-256 of the raw body when the provider sends none.
+  externalId  String        @map("external_id") @db.VarChar(191)
+  eventType   String?       @map("event_type") @db.VarChar(100)
+  status      WebhookStatus @default(RECEIVED)
+  /// Redacted payload.
+  payload     Json
+  attempts    Int           @default(0)
+  error       String?       @db.Text
+  receivedAt  DateTime      @default(now()) @map("received_at") @db.Timestamptz(3)
+  processedAt DateTime?     @map("processed_at") @db.Timestamptz(3)
+
+  @@unique([provider, externalId])
+  @@index([status, receivedAt])
+  @@map("webhook_events")
+}
+
+/// Store-wide, non-secret settings (support contacts, COD limits, tax mode, low-stock threshold, ...).
+/// Each key has a zod schema in code.
+model Setting {
+  key         String   @id @db.VarChar(100)
+  value       Json
+  updatedById String?  @map("updated_by_id") @db.Uuid
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  updatedBy User? @relation("SettingUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("settings")
+}

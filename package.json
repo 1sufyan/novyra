@@ -1,0 +1,18 @@
+{
+  "name": "novyra",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.28.2",
+  "engines": {
+    "node": ">=24.11.0 <25"
+  },
+  "scripts": {
+    "db:validate": "pnpm --filter @novyra/db run validate",
+    "db:generate": "pnpm --filter @novyra/db run generate",
+    "db:migrate:dev": "pnpm --filter @novyra/db run migrate:dev",
+    "db:migrate:deploy": "pnpm --filter @novyra/db run migrate:deploy",
+    "db:studio": "pnpm --filter @novyra/db run studio",
+    "db:typecheck": "pnpm --filter @novyra/db run typecheck",
+    "db:test": "pnpm --filter @novyra/db run test:integration"
+  }
+}
