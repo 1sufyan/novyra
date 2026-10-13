@@ -14,8 +14,8 @@
 //
 // The User/Session/Account/Verification/TwoFactor models follow the Better Auth
 // core + two-factor plugin schema. Field names must stay as they are. Their IDs are
-// native uuid columns, so Better Auth must run with advanced.database.generateId: "uuid"
-// (its default 32-character string IDs are rejected by PostgreSQL).
+// native uuid columns, so Better Auth must not use its default 32-character string IDs
+// (PostgreSQL rejects them). Both instances set advanced.database.generateId: "uuid".
 // ============================================================================
 
 generator client {

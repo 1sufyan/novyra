@@ -20,7 +20,7 @@ Required: ● always · ◐ production/staging only · ○ only if the integrati
 | `NEXT_PUBLIC_SITE_URL` | S A | public | ● | Storefront origin, e.g. `https://novyra.pk`. Canonical URLs, email links. |
 | `ADMIN_URL` | S A | config | ● | Admin origin, e.g. `https://admin.novyra.pk`. Trusted origin for the admin auth instance. |
 | `DATABASE_URL` | S A J | secret | ● | **Pooled** PostgreSQL URL used at runtime (`sslmode=require` in hosted envs). Runtime DB role: DML only. |
-| `DIRECT_DATABASE_URL` | CI | secret | ● | **Direct** (non-pooled) URL for `prisma migrate`. Migrator DB role. |
+| `DIRECT_DATABASE_URL` | dev CI | secret | ● | **Direct** (non-pooled) URL used by the Prisma CLI. `prisma.config.ts` requires it for every Prisma command, including `prisma generate` during app builds. Migrator DB role for `migrate deploy`. |
 | `SHADOW_DATABASE_URL` | dev CI | secret | ○ | Disposable DB for `migrate dev` / drift checks. Never production. |
 | `TEST_DATABASE_URL` | dev CI | secret | ○ | Disposable DB for the integrity tests: `pnpm db:test:prepare` migrates it, `pnpm db:test` runs against it. Never production. |
 | `DATA_ENCRYPTION_KEY` | S A J | secret | ● | 32 random bytes, base64. AES-256-GCM for field-level encryption (refund payout details). Versioned (`v1:`) for rotation. |

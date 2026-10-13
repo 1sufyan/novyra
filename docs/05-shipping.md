@@ -40,6 +40,8 @@ flowchart LR
 
 ```ts
 // packages/core/src/shipping/types.ts
+import type { InboundHttpRequest, Money } from "../shared/types.ts";
+
 export type CarrierCode = string; // "manual" | "tcs" | "leopards" | "postex" | "mnp" | "trax" | ...
 
 export type NormalizedShipmentStatus =
@@ -160,7 +162,7 @@ consignments. That's why outcome-unknown bookings are never auto-retried without
 ## 7. Tracking
 
 - **Webhook couriers:** signature or shared-secret verified, `webhook_events` de-duplicated, then the same `TrackingService.apply()` path.
-- **Polling couriers:** `shipments-sync` picks shipments by `next_sync_at` (a partial index keeps this cheap). Backoff follows status: every 2 h in transit, every 30 min out for delivery, stops when terminal.
+- **Polling couriers:** `shipments-sync` picks shipments by `next_sync_at` (the `shipments(status, next_sync_at)` index keeps this cheap). Backoff follows status: every 2 h in transit, every 30 min out for delivery, stops when terminal.
 - Each carrier status maps through the adapter's `mapping.ts` to a `NormalizedShipmentStatus`. Unknown codes map to `EXCEPTION` and alert staff.
 - `shipment_events` is de-duplicated by `dedupe_key = sha256(occurredAt + carrierStatus + location)`, so re-polling is harmless.
 - Status effects:

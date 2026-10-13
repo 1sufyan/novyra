@@ -46,6 +46,8 @@ flowchart LR
 
 ```ts
 // packages/core/src/notifications/types.ts
+import type { InboundHttpRequest } from "../shared/types.ts";
+
 export type NotificationChannel = "EMAIL" | "SMS" | "WHATSAPP" | "IN_APP";
 
 export interface RenderedMessage {
