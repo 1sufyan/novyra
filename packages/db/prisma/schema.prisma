@@ -6,13 +6,16 @@
 // - Tables/columns: snake_case in the database, camelCase in TypeScript.
 // - Money: NUMERIC(14,2) in the store's base currency (PKR). Never floats.
 // - Timestamps: timestamptz(3), always UTC.
-// - Orders, payments, refunds and shipments are never hard-deleted (FKs RESTRICT).
+// - Orders, payments, refunds, shipments and returns are never deleted by application
+//   code. RESTRICT FKs stop deleting an order or payment that has any history.
 // - Order lines snapshot product data; editing the catalog never rewrites history.
 // - CHECK constraints, partial unique indexes and append-only triggers that
 //   Prisma cannot express live in migrations/*_integrity_constraints.
 //
 // The User/Session/Account/Verification/TwoFactor models follow the Better Auth
-// core + two-factor plugin schema. Field names must stay as they are.
+// core + two-factor plugin schema. Field names must stay as they are. Their IDs are
+// native uuid columns, so Better Auth must run with advanced.database.generateId: "uuid"
+// (its default 32-character string IDs are rejected by PostgreSQL).
 // ============================================================================
 
 generator client {

@@ -47,10 +47,12 @@ pnpm db:migrate:deploy                    # apply migrations to DIRECT_DATABASE_
 pnpm db:generate                          # generate the Prisma client (git-ignored)
 pnpm db:typecheck
 
-# integrity tests need a separate, disposable, migrated database:
-DIRECT_DATABASE_URL=$TEST_DATABASE_URL pnpm db:migrate:deploy
+# integrity tests run against a separate, disposable database:
+pnpm db:test:prepare                      # apply migrations to TEST_DATABASE_URL
 pnpm db:test
 ```
+
+The db scripts read `novyra/.env` (and `packages/db/.env` if present). Variables already exported in the shell take precedence.
 
 ## Principles
 

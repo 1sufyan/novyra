@@ -5,7 +5,7 @@
  * including under concurrency. Run against a DISPOSABLE database with all
  * migrations applied:
  *
- *   TEST_DATABASE_URL=postgresql://... pnpm --filter @novyra/db test:integration
+ *   pnpm db:test:prepare && pnpm db:test      (TEST_DATABASE_URL from novyra/.env or the shell)
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -13,6 +13,7 @@ import { after, describe, test } from "node:test";
 
 import { PrismaPg } from "@prisma/adapter-pg";
 
+import "../load-env.ts";
 import { PrismaClient } from "../src/generated/prisma/client.ts";
 
 const url = process.env.TEST_DATABASE_URL;

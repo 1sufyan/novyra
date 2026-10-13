@@ -13,6 +13,7 @@
     "db:migrate:deploy": "pnpm --filter @novyra/db run migrate:deploy",
     "db:studio": "pnpm --filter @novyra/db run studio",
     "db:typecheck": "pnpm --filter @novyra/db run typecheck",
+    "db:test:prepare": "pnpm --filter @novyra/db run test:prepare",
     "db:test": "pnpm --filter @novyra/db run test:integration"
   }
 }

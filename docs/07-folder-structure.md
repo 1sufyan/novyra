@@ -76,6 +76,8 @@ novyra/
 ├── packages/
 │   ├── db/                           ✅ @novyra/db
 │   │   ├── prisma.config.ts          ✅ datasource URLs (Prisma 7)
+│   │   ├── prisma.test.config.ts     ✅ same, pointed at TEST_DATABASE_URL (db:test:prepare)
+│   │   ├── load-env.ts               ✅ loads packages/db/.env, then novyra/.env
 │   │   ├── prisma/
 │   │   │   ├── schema.prisma         ✅ 58 models, 34 enums
 │   │   │   └── migrations/           ✅ init + integrity_constraints

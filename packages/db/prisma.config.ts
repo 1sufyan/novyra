@@ -1,4 +1,5 @@
-import "dotenv/config";
+import "./load-env.ts";
+
 import { defineConfig, env } from "prisma/config";
 
 // Prisma 7 reads connection strings from here, not from schema.prisma.

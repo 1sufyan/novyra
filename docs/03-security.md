@@ -14,7 +14,10 @@
 
 ## 2. Authentication
 
-**Library:** Better Auth 1.7.7, configured in `packages/auth` as **two instances** that share the user tables:
+**Library:** Better Auth 1.7.7, configured in `packages/auth` as **two instances** that share the user tables.
+Both instances must set `advanced.database.generateId: "uuid"`. The tables use native `uuid` IDs, and Better Auth's default
+32-character string IDs are rejected by PostgreSQL (verified against this schema: sign-up fails by default, and with
+`"uuid"` the user, account and session rows get Prisma's UUIDv7 IDs).
 
 | | Storefront (`novyra.pk`) | Admin (`admin.novyra.pk`) |
 |---|---|---|

@@ -52,7 +52,7 @@ Type-checked under `strict` + `exactOptionalPropertyTypes` (TypeScript 6.0.3).
 
 ```ts
 // packages/core/src/payments/types.ts
-import type { InboundHttpRequest, Money } from "../shared/types";
+import type { InboundHttpRequest, Money } from "../shared/types.ts";
 
 export type PaymentMethodType = "CASH_ON_DELIVERY" | "BANK_TRANSFER" | "CARD" | "MOBILE_WALLET" | "BNPL" | "OTHER";
 

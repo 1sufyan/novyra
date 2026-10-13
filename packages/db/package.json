@@ -12,6 +12,7 @@
     "migrate:deploy": "prisma migrate deploy",
     "migrate:status": "prisma migrate status",
     "studio": "prisma studio",
+    "test:prepare": "prisma migrate deploy --config prisma.test.config.ts",
     "test:integration": "tsx --test tests/*.test.ts"
   },
   "dependencies": {

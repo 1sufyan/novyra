@@ -17,7 +17,7 @@
 | Timestamps | `timestamptz(3)`, UTC | No timezone ambiguity. The UI formats in `Asia/Karachi`. |
 | Enums | PostgreSQL enums for closed state sets (statuses); `VARCHAR` codes for open sets (payment provider, courier, template) | Adding a payment provider or courier never needs a migration. |
 | Snapshots | Orders copy product name, SKU, price, image and address at purchase time | Editing or archiving a product never rewrites order history. |
-| Deletion | Orders, payments, refunds, shipments, returns: `ON DELETE RESTRICT`, never deleted. Products and variants: archived, not deleted. Users with orders: anonymised (`deleted_at` + PII scrubbed), not deleted. | Accounting, dispute and tax records stay intact. |
+| Deletion | Orders, payments, refunds, shipments and returns are never deleted by application code: they're cancelled, voided or closed instead. In the database, `ON DELETE RESTRICT` stops an order or payment from being deleted while any payment, refund, shipment, return, event, reservation or coupon redemption references it. Products and variants: archived, not deleted. Users with orders: anonymised (`deleted_at` + PII scrubbed), not deleted. | Accounting, dispute and tax records stay intact. |
 | JSON | Only for genuinely schemaless data (redacted provider payloads, spec sheets, personalisation). Each JSON column has a Zod schema in code. | Keeps queryable data relational. |
 
 ## 2. Entity-relationship overview
@@ -240,7 +240,7 @@ pnpm --filter @novyra/db exec prisma migrate dev --create-only --name <change>_c
 # CI: verify no drift between migrations and schema (needs SHADOW_DATABASE_URL; exit 2 = drift)
 pnpm --filter @novyra/db exec prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code
 # CI: apply all migrations to an empty database and run the integrity tests
-pnpm --filter @novyra/db run migrate:deploy && TEST_DATABASE_URL=… pnpm --filter @novyra/db run test:integration
+pnpm --filter @novyra/db run test:prepare && pnpm --filter @novyra/db run test:integration   # TEST_DATABASE_URL
 # production (release pipeline, before the new app version goes live):
 pnpm --filter @novyra/db run migrate:deploy
 ```
@@ -270,7 +270,7 @@ for accounting. Audit logs keep the action, with the actor FK set to NULL if the
 - Permissions (from code) and system roles: `owner`, `store_manager`, `fulfilment`, `support`, `content_editor`, `finance`
 - Pakistani cities with provinces, plus default shipping zones (e.g. *Lahore*, *Major cities*, *Rest of Pakistan*)
 - Shipping methods: `standard`, `insured-express`, `store-pickup`
-- Payment methods: `cod` and `bank_transfer` (enabled, no credentials needed); gateway rows **disabled** until credentials exist
+- Payment methods: `cod` and `bank_transfer` (enabled, no credentials needed). Gateway rows are added when a gateway is onboarded (see [04-payments.md §6](04-payments.md#checklist-for-adding-a-provider)).
 - Default inventory location
 - Settings: support contacts, COD limits, return window, reservation TTL, tax mode
 

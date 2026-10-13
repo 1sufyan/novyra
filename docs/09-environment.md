@@ -22,7 +22,7 @@ Required: ● always · ◐ production/staging only · ○ only if the integrati
 | `DATABASE_URL` | S A J | secret | ● | **Pooled** PostgreSQL URL used at runtime (`sslmode=require` in hosted envs). Runtime DB role: DML only. |
 | `DIRECT_DATABASE_URL` | CI | secret | ● | **Direct** (non-pooled) URL for `prisma migrate`. Migrator DB role. |
 | `SHADOW_DATABASE_URL` | dev CI | secret | ○ | Disposable DB for `migrate dev` / drift checks. Never production. |
-| `TEST_DATABASE_URL` | dev CI | secret | ○ | Disposable, migrated DB for `pnpm --filter @novyra/db test:integration`. Never production. |
+| `TEST_DATABASE_URL` | dev CI | secret | ○ | Disposable DB for the integrity tests: `pnpm db:test:prepare` migrates it, `pnpm db:test` runs against it. Never production. |
 | `DATA_ENCRYPTION_KEY` | S A J | secret | ● | 32 random bytes, base64. AES-256-GCM for field-level encryption (refund payout details). Versioned (`v1:`) for rotation. |
 | `INTERNAL_API_SECRET` | S A | secret | ● | HMAC key for admin → storefront `/api/internal/dispatch`. `openssl rand -base64 48`. |
 | `CRON_SECRET` | S | secret | ◐ | Bearer token Vercel Cron sends to `/api/cron/*`. |
@@ -71,6 +71,7 @@ Required: ● always · ◐ production/staging only · ○ only if the integrati
 
 ## Payments
 
+Used by the storefront (initiation, return URLs, webhooks, reconciliation cron) and the admin (refunds, manual verification).
 Only providers you have registered **and** configured can be enabled in admin. `cod` and `bank_transfer` need no
 variables (bank account details are public instructions entered in admin).
 
@@ -91,6 +92,8 @@ The exact credential set per gateway is confirmed from its merchant integration 
 NOVYRA's own and stay stable.
 
 ## Shipping
+
+Used by the admin (booking, labels, cancellation) and the storefront (tracking webhooks and the `shipments-sync` cron).
 
 | Variable | Kind | Req. | Purpose |
 |---|---|---|---|

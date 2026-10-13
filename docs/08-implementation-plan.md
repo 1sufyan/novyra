@@ -48,7 +48,7 @@ Remaining:
 - `packages/auth`: storefront and admin Better Auth instances, Argon2id, breached-password check, email verification, password reset, session management, TOTP 2FA (mandatory for staff), staff invitations.
 - Permission catalogue + guards (`requireUser`, `requirePermission`, `requireFreshSession`). `defineAction()` pipeline (validate → auth → authorise → rate limit → idempotency → audit).
 - Upstash rate limiting, Turnstile, audit log service, Resend sender + auth email templates.
-- **Tests:** authorisation matrix (every permission × every role), auth flows, rate-limit behaviour, CSRF origin checks.
+- **Tests:** authorisation matrix (every permission × every role), auth flows, rate-limit behaviour, CSRF origin checks, and a Better Auth ↔ schema test (sign-up with `generateId: "uuid"` writes UUIDv7 IDs).
 
 **Exit:** a staff member can be invited, enrol 2FA and sign in to admin. A customer can sign up, verify and reset. Every denial is audited.
 
@@ -119,6 +119,8 @@ Remaining:
 - Monitoring and alerts (Sentry, uptime, business alerts), status of cron jobs, on-call contact list.
 - Accessibility audit (WCAG 2.2 AA), performance budget (LCP < 2.5 s on 4G mid-range Android, CLS < 0.1).
 - Production cut-over checklist: DNS, TLS, HSTS preload, email domain authentication (SPF/DKIM/DMARC), live credentials, payment-method enablement, robots allowed.
+
+**Exit:** penetration-test findings rated high or above are fixed, the restore drill has passed, alerts reach the on-call contacts, and the cut-over checklist is signed off by the owner.
 
 ---
 
