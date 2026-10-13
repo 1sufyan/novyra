@@ -4,9 +4,9 @@ Production architecture for NOVYRA's online store: a customer storefront, an ope
 backend for catalog, orders, inventory, payments, shipping, notifications and analytics, built for the Pakistani
 market first (COD, bank transfer, local gateways and couriers) and international later.
 
-> **Status: Phase 0 (foundations) in progress.** This repository holds the architecture and a working,
-> tested database package. **No UI has been built yet.** The key product decisions are recorded in
-> [docs/08-implementation-plan.md](docs/08-implementation-plan.md#decisions).
+> **Status: Phase 0 (foundations) complete in code; staging deploy waits on hosting accounts and domains.**
+> The monorepo, database, shared backend kernel, seed, CI and two empty Next.js apps exist and are tested.
+> **No UI has been built yet** (Phase 2). Decisions: [docs/08-implementation-plan.md](docs/08-implementation-plan.md#decisions).
 
 ## Documents
 
@@ -23,36 +23,44 @@ market first (COD, bank transfer, local gateways and couriers) and international
 | 08 | [Implementation plan](docs/08-implementation-plan.md) | Phases, exit criteria, testing strategy, **decisions** (agreed and still open), accounts to request |
 | 09 | [Environment](docs/09-environment.md) | Every env var: purpose, app, secret/public, when required |
 
-## What exists and is verified
+## Getting started
 
-| Item | Verification |
-|---|---|
-| `packages/db/prisma/schema.prisma`: 58 models, 34 enums | `prisma validate` ✓ · `prisma format` ✓ |
-| `migrations/…_init` + `migrations/…_integrity_constraints` | Applied to PostgreSQL 16 ✓ · `migrate diff` (DB ↔ schema and migrations ↔ schema): **no drift** ✓ · shadow-DB `migrate dev`: empty ✓ |
-| `packages/db/tests/integrity.test.ts` | **14/14 pass**, stable over repeated runs. Covers concurrent stock reservation (8 buyers, 3 units → exactly 3 succeed), concurrent coupon redemption, outbox claiming with `SKIP LOCKED`, total arithmetic, refund caps, append-only ledgers. A negative control without the constraints migration fails 12/14. |
-| Generated client + tests | `tsc --noEmit` with TypeScript 6.0.3 ✓ |
-| Integration contracts in docs 04–06 | Type-checked under `strict` + `exactOptionalPropertyTypes` ✓ |
-
-## Working with the database package
-
-Requires Node 24 LTS, pnpm 11 and a PostgreSQL ≥ 13 you can create databases on.
+Requires Node 24 LTS, pnpm 11 (`corepack enable` or `npm i -g pnpm@11`) and Docker.
 
 ```bash
 git clone https://github.com/1sufyan/novyra && cd novyra
 pnpm install
-cp .env.example .env                      # set DIRECT_DATABASE_URL, SHADOW_DATABASE_URL, TEST_DATABASE_URL
+cp .env.example .env              # works as-is with docker compose
+docker compose up -d              # PostgreSQL 17 (+ shadow and test databases) and Mailpit
 
-pnpm db:validate                          # schema is valid
-pnpm db:migrate:deploy                    # apply migrations to DIRECT_DATABASE_URL
-pnpm db:generate                          # generate the Prisma client (git-ignored)
-pnpm db:typecheck
-
-# integrity tests run against a separate, disposable database:
-pnpm db:test:prepare                      # apply migrations to TEST_DATABASE_URL
-pnpm db:test
+pnpm db:migrate:deploy            # apply migrations
+pnpm db:seed                      # permissions, roles, cities, methods, settings (idempotent)
+pnpm dev                          # storefront http://localhost:3000 · admin http://localhost:3001
 ```
 
-The db scripts read the repository's root `.env` (and `packages/db/.env` if present). Variables already exported in the shell take precedence.
+Every command reads the repository-root `.env`; variables exported in the shell take precedence.
+
+| Command | What it does |
+|---|---|
+| `pnpm lint` · `pnpm typecheck` · `pnpm format:check` | Static checks across the monorepo (Turborepo) |
+| `pnpm test` | Unit tests (no database) |
+| `pnpm db:test:prepare && pnpm test:integration` | Migrates `TEST_DATABASE_URL`, then runs every database test |
+| `pnpm build` | Production builds of both apps |
+| `pnpm db:migrate:dev --name <change>` | Create a migration after editing `schema.prisma` |
+| `pnpm db:studio` | Browse the local database |
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all of the above on every push, against a real PostgreSQL,
+including a migration-drift check and seeding twice.
+
+## What is tested
+
+| Area | Proof |
+|---|---|
+| Schema and migrations | `prisma validate`; no drift between migrations, schema and a migrated database; applies to an empty database in CI |
+| Database integrity (`packages/db/tests`) | 14 integrity tests (8 buyers for 3 units → exactly 3 succeed; coupon limits; refund caps; append-only ledgers) and 5 transaction tests (real deadlocks are retried and both sides commit) |
+| Backend kernel (`packages/core`) | Unit: money arithmetic and allocation, AES-GCM field encryption with key rotation, HMAC, error exposure rules, SSRF-safe HTTP client, log redaction. Integration: idempotency under concurrency, outbox delivering each event exactly once across concurrent workers, health, seed idempotency |
+| Environment | Invalid or missing variables stop the apps from booting, without echoing values |
+| Apps | Security headers and CSP on every response; per-request CSP nonce on every admin script; request ids that clients can't forge into logs; `/api/health` returns 503 when background work is failing |
 
 ## Principles
 

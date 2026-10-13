@@ -236,9 +236,9 @@ frame-ancestors 'none'; base-uri 'self'; object-src 'none'; upgrade-insecure-req
 
 ## 13. Secrets and environment variables
 
-- **All secrets are server-only env vars**, validated at build and boot by `packages/env` (Zod). Missing or invalid → the app refuses to start. The full list is in [09-environment.md](09-environment.md).
+- **All secrets are server-only env vars**, validated at boot by `packages/env` (Zod) from each app's `instrumentation.ts`. Missing or invalid → the app refuses to start, and the error names the variable, never its value. The full list is in [09-environment.md](09-environment.md).
 - **Only `NEXT_PUBLIC_*` vars reach the browser**, and the env package's client schema allowlists exactly which ones. Each is a public identifier (site URL, GA measurement ID, Pixel ID, Turnstile site key, Cloudinary cloud name, Sentry DSN).
-- `packages/env/server.ts`, `packages/auth`, `packages/core` and `packages/db` import `server-only`, so bundling them for the client fails the build.
+- The app-facing server entry points (`@novyra/env/server`, `@novyra/core/platform` and each service module as it lands) import `server-only`, so bundling them for the client fails the build. Apps can't import `@novyra/db` at all (ESLint).
 - React's taint API (`experimental.taint`) marks secret values and server-only objects so they can't be passed to Client Components by accident.
 - Integration secrets (gateways, couriers, email) live **only** in env. The DB stores non-secret config (`payment_methods.settings`). Admin can't enable a provider whose env isn't configured.
 - Field-level encryption: `refunds.payout_details_encrypted` uses AES-256-GCM with `DATA_ENCRYPTION_KEY`, ciphertext prefixed with a key version (`v1:`) so keys can rotate.

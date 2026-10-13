@@ -102,7 +102,7 @@ apps/*  ──►  packages/core  ──►  packages/db
    └──► packages/emails ◄── core/notifications
 ```
 
-- `packages/core`, `packages/auth`, `packages/db` and `packages/env/server` start with `import "server-only"`. A client component that imports them fails the build.
+- Every entry point an app imports that can reach the database or secrets (`@novyra/core/platform`, `@novyra/env/server`, and each service module as it is added) starts with `import "server-only"`. A Client Component that imports one fails the build (verified in Phase 0). Internal modules used only by other server code, scripts and tests don't carry the marker; tests alias it to an empty stub.
 - Apps never import `@novyra/db` directly. Data access goes through core services, which return **DTOs, never Prisma models**. That prevents leaking columns such as `costPrice`, `password` or `payoutDetailsEncrypted`.
 - `core` modules call each other only through their `index.ts` public API.
 

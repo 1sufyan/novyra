@@ -4,7 +4,8 @@ Rules:
 
 - **Secret** vars are read only on the server (`packages/env/server.ts`, which imports `server-only`).
 - **Public** vars must start with `NEXT_PUBLIC_` and be listed in `packages/env/client.ts`. They're compiled into browser bundles, so they're never secrets.
-- Validation runs at build and boot (Zod). In `production`, a missing *required* var stops the app from starting.
+- Validation runs when each app boots (Zod, from `instrumentation.ts`). A missing or invalid *required* var stops the app from starting. Today the validated set is the Core table below (`DATABASE_URL`, `NEXT_PUBLIC_SITE_URL`, `ADMIN_URL`, plus the deployment secrets in staging and production); each later phase adds its variables to `packages/env`.
+- **One `.env` at the repository root** for local development. The Prisma CLI, seed, tests and both apps read it (the apps through `with-root-env`). Variables already exported in the shell win. CI and hosting set real environment variables and have no `.env`.
 - Integration vars are required **only when that integration is enabled**. Each adapter's `config.ts` validates its own group, and `isConfigured()` reports the result to the admin UI.
 - `.env` files are git-ignored. Only [`.env.example`](../.env.example) is committed. Production values live only in the hosting provider's encrypted env store.
 - Generate random secrets with `openssl rand -base64 32` (or `-base64 48` where noted).

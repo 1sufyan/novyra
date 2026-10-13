@@ -27,22 +27,24 @@ critical path in Pakistan. **Start those applications now.** Phases 5 and 6 can 
 
 ---
 
-### Phase 0: Foundations
+### Phase 0: Foundations ✅ (code complete)
 
-**Done in this change:** architecture docs, Prisma schema, initial migration, integrity-constraints migration,
-DB integrity test suite, `.env.example`, pnpm workspace.
-
-Remaining:
+Done:
+- Architecture docs, Prisma schema, initial + integrity-constraints migrations, DB integrity tests, `.env.example`.
 - ✅ Project moved into the dedicated [`1sufyan/novyra`](https://github.com/1sufyan/novyra) repository with its history (D12).
-- Root tooling: `turbo.json`, shared `tsconfig`/ESLint (with import-boundary rules)/Prettier in `packages/config`, Renovate config.
-- `docker-compose.yml`: PostgreSQL 17 + Mailpit.
-- `packages/env` (server/client Zod schemas, boot-time validation).
-- `packages/db`: `client.ts` (Prisma + `@prisma/adapter-pg`, singleton), `withTransaction()` with retry, **seed** (permissions, roles, cities with provinces, zones, shipping methods, `cod` + `bank_transfer` payment methods, default location, settings).
-- `packages/core/shared`: `Money`, error types, `Result`, logger with redaction, request context, idempotency helper, outbox writer + dispatcher skeleton, allowlisted `fetch`.
-- CI (GitHub Actions): install → lint → typecheck → unit tests → Postgres service → `migrate deploy` → integrity tests → migration drift check → build.
-- Empty `apps/storefront` and `apps/admin` Next.js 16 shells (no UI yet) with security headers and `/api/health`.
+- ✅ Root tooling: pnpm workspace, Turborepo task graph, shared tsconfig / ESLint (with app import boundaries) / Prettier in `packages/config`, Renovate config, `.nvmrc`.
+- ✅ `docker-compose.yml`: PostgreSQL 17 (with shadow + test databases) and Mailpit.
+- ✅ `packages/env`: server/client Zod schemas; the apps refuse to boot with an invalid environment.
+- ✅ `packages/db`: Prisma client factory (`@prisma/adapter-pg`, one pool per process), `withTransaction()` with timeout and retry on serialization failures and deadlocks (tested with real deadlocks).
+- ✅ `packages/core`: shared kernel (`Money`, typed errors, `Result`, AES-GCM field encryption, HMAC, redacting logger, request context, idempotency, transactional outbox + dispatcher, allowlisted `fetch`, health), settings with the decided defaults, idempotent seed.
+- ✅ `packages/auth`: permission catalogue + system role templates (the rest of the package is Phase 1).
+- ✅ CI (GitHub Actions): format → schema → drift → lint → typecheck → unit → migrate empty DB → seed twice → integration (real PostgreSQL) → build.
+- ✅ `apps/storefront` and `apps/admin` Next.js 16 shells: placeholder page, security headers and CSP (admin: per-request nonce), request ids, `/api/health`.
 
-**Exit:** CI green on a clean clone. `docker compose up && pnpm db:migrate:deploy && pnpm db:seed` works. Health endpoints return `ok` on staging.
+Remaining (needs accounts, not code):
+- Staging deploy: Vercel projects for both apps, a managed PostgreSQL, and the domains (decision D11). Once these exist, the health endpoints are checked on staging and Phase 0 is closed.
+
+**Exit:** CI green on a clean clone ✅ · `docker compose up && pnpm db:migrate:deploy && pnpm db:seed` works ✅ · health endpoints return `ok` on staging (waiting on D11 and hosting accounts).
 
 ### Phase 1: Authentication, RBAC, audit
 

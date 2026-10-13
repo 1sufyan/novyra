@@ -242,7 +242,7 @@ pnpm --filter @novyra/db exec prisma migrate diff --from-migrations prisma/migra
 # CI: apply all migrations to an empty database and run the integrity tests
 pnpm --filter @novyra/db run test:prepare && pnpm --filter @novyra/db run test:integration   # TEST_DATABASE_URL
 # production (release pipeline, before the new app version goes live):
-pnpm --filter @novyra/db run migrate:deploy
+pnpm --filter @novyra/db run migrate:deploy && pnpm db:seed
 ```
 
 - Production changes are **expand → migrate → contract**: add nullable column, deploy code that writes both, backfill, then make it required and drop the old one in a later release. Never a breaking rename in one step.
@@ -265,13 +265,22 @@ Account erasure: the user's sessions, accounts, addresses, wishlist and reviews 
 `deleted_at = now()`, `email = 'deleted+<id>@invalid'`, `name = 'Deleted user'`, phone nulled. Orders keep their snapshots
 for accounting. Audit logs keep the action, with the actor FK set to NULL if the row is ever removed.
 
-## 8. Seed data (Phase 0)
+## 8. Seed data
 
-- Permissions (from code) and system roles: `owner`, `store_manager`, `fulfilment`, `support`, `content_editor`, `finance`
-- Pakistani cities with provinces, plus default shipping zones (e.g. *Lahore*, *Major cities*, *Rest of Pakistan*)
-- Shipping methods: `standard`, `insured-express`, `store-pickup`
-- Payment methods: `cod` and `bank_transfer` (enabled, no credentials needed). Gateway rows are added when a gateway is onboarded (see [04-payments.md §6](04-payments.md#checklist-for-adding-a-provider)).
-- Default inventory location
-- Settings: support contacts, COD limits, return window, reservation TTL, tax mode
+`pnpm db:seed` ([`packages/core/src/seed`](../packages/core/src/seed)) is idempotent and safe to run on every deploy.
+Code-owned data is synced to the code. Everything the owner can edit in admin is only created when missing,
+never overwritten. CI seeds twice and the integration tests prove both properties.
 
-No demo products or fake orders are seeded into staging or production.
+| Data | Seeded | On re-run |
+|---|---|---|
+| Permissions | the catalogue in `packages/auth/src/permissions.ts` | synced (added, described, removed) |
+| System roles | `owner`, `store_manager`, `finance`, `fulfilment`, `support`, `content_editor` | permission sets reset to the templates |
+| Cities | 39 Pakistani cities with provinces | missing ones added; existing rows untouched |
+| Shipping zone | one default zone, *Pakistan*, holding every seeded city | untouched |
+| Shipping methods | `standard`, `insured-express` (offered only once the owner adds rates) | untouched |
+| Payment methods | `cod` (enabled), `bank_transfer` (disabled until the owner enters the account details customers see) | untouched |
+| Stock location | `MAIN`, the default | untouched |
+| Settings | `store`, `tax`, `cod`, `returns`, `inventory` with the decided defaults from [08](08-implementation-plan.md#decisions) | untouched |
+
+Shipping rates, narrower zones, store pickup and gateway payment methods are owner decisions, configured in admin
+(Phases 3–5). No demo products or fake orders are ever seeded.
