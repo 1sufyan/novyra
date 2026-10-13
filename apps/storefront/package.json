@@ -1,0 +1,28 @@
+{
+  "name": "@novyra/storefront",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "with-root-env next dev --port 3000",
+    "build": "with-root-env next build",
+    "start": "with-root-env next start --port 3000",
+    "lint": "eslint .",
+    "typecheck": "next typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "@novyra/config": "workspace:*",
+    "@novyra/core": "workspace:*",
+    "@novyra/env": "workspace:*",
+    "next": "16.3.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "eslint": "9.39.5",
+    "typescript": "6.0.3"
+  }
+}

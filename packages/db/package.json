@@ -3,10 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "validate": "prisma validate",
     "format": "prisma format",
     "generate": "prisma generate",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
@@ -21,9 +25,11 @@
     "pg": "8.23.1"
   },
   "devDependencies": {
+    "@novyra/config": "workspace:*",
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
     "dotenv": "17.4.2",
+    "eslint": "9.39.5",
     "prisma": "7.10.0",
     "tsx": "4.23.15",
     "typescript": "6.0.3"

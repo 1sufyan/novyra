@@ -1,0 +1,35 @@
+{
+  "name": "@novyra/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./platform": "./src/platform/index.ts",
+    "./settings": "./src/settings/index.ts",
+    "./shared": "./src/shared/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "seed": "tsx scripts/seed.ts"
+  },
+  "dependencies": {
+    "@novyra/auth": "workspace:*",
+    "@novyra/db": "workspace:*",
+    "decimal.js": "10.6.0",
+    "pino": "10.4.0",
+    "server-only": "0.0.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@novyra/config": "workspace:*",
+    "@types/node": "24.19.2",
+    "dotenv": "17.4.2",
+    "eslint": "9.39.5",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "vitest": "5.0.4"
+  }
+}
