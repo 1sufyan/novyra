@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+# Least privilege: CI only reads the code.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+  TURBO_TELEMETRY_DISABLED: "1"
+
+jobs:
+  checks:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_USER: novyra
+          POSTGRES_PASSWORD: novyra
+          POSTGRES_DB: novyra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U novyra -d novyra"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql://novyra:novyra@localhost:5432/novyra
+      DIRECT_DATABASE_URL: postgresql://novyra:novyra@localhost:5432/novyra
+      SHADOW_DATABASE_URL: postgresql://novyra:novyra@localhost:5432/novyra_shadow
+      TEST_DATABASE_URL: postgresql://novyra:novyra@localhost:5432/novyra_test
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      ADMIN_URL: http://localhost:3001
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Create shadow and test databases
+        run: |
+          docker exec ${{ job.services.postgres.id }} psql -U novyra -d novyra \
+            -c "CREATE DATABASE novyra_shadow" -c "CREATE DATABASE novyra_test"
+
+      - name: Formatting
+        run: pnpm format:check
+
+      - name: Prisma schema is valid
+        run: pnpm db:validate
+
+      - name: Migrations match the schema (no drift)
+        run: >-
+          pnpm --filter @novyra/db exec prisma migrate diff
+          --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Migrate an empty database
+        run: pnpm db:migrate:deploy
+
+      - name: Seed twice (must be idempotent)
+        run: pnpm db:seed && pnpm db:seed
+
+      - name: Integration tests (real PostgreSQL)
+        run: pnpm db:test:prepare && pnpm test:integration
+
+      - name: Build apps
+        run: pnpm build
