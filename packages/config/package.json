@@ -12,7 +12,8 @@
     "./eslint/base": "./eslint/base.js",
     "./eslint/next": "./eslint/next.js",
     "./next/security-headers": "./next/security-headers.js",
-    "./vitest/server-only-stub": "./vitest/server-only-stub.js"
+    "./vitest/server-only-stub": "./vitest/server-only-stub.js",
+    "./testing/next-server": "./testing/next-server.js"
   },
   "dependencies": {
     "@eslint/js": "9.39.5",

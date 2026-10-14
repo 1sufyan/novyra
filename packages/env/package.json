@@ -3,8 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "check-env": "./bin/check-env.js"
+  },
   "exports": {
     "./server": "./src/server.ts",
+    "./schema": "./src/schema.ts",
     "./client": "./src/client.ts"
   },
   "scripts": {

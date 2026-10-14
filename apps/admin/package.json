@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "with-root-env next dev --port 3001",
-    "build": "with-root-env next build",
-    "start": "with-root-env next start --port 3001",
+    "dev": "with-root-env check-env && with-root-env next dev --port 3001",
+    "build": "with-root-env check-env && with-root-env next build",
+    "start": "with-root-env check-env && with-root-env next start --port 3001",
     "lint": "eslint .",
+    "test:smoke": "node --test tests/*.test.ts",
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {

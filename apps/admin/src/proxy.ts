@@ -17,7 +17,10 @@ export function proxy(request: NextRequest) {
   const csp = buildCsp({
     "default-src": ["'self'"],
     "script-src": ["'self'", `'nonce-${nonce}'`, "'strict-dynamic'"],
-    "style-src": ["'self'", `'nonce-${nonce}'`],
+    // Next.js renders some <style> elements and style attributes without the nonce, and a nonce
+    // can't cover attributes, so styles stay 'unsafe-inline' (as on the storefront). Scripts,
+    // the real injection risk, still need the nonce.
+    "style-src": ["'self'", "'unsafe-inline'"],
     "img-src": ["'self'", "data:", "blob:"],
     "font-src": ["'self'"],
     "connect-src": ["'self'"],

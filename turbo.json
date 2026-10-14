@@ -1,6 +1,7 @@
 {
   "$schema": "https://turborepo.com/schema.json",
   "ui": "stream",
+  "agentGuidance": false,
   "globalDependencies": [".env"],
   "globalPassThroughEnv": [
     "APP_ENV",
@@ -10,34 +11,46 @@
     "DIRECT_DATABASE_URL",
     "SHADOW_DATABASE_URL",
     "TEST_DATABASE_URL",
+    "ADMIN_URL",
+    "DATA_ENCRYPTION_KEY",
+    "INTERNAL_API_SECRET",
+    "CRON_SECRET",
     "CI"
   ],
   "tasks": {
+    "transit": {
+      "dependsOn": ["^transit"]
+    },
     "generate": {
-      "inputs": ["prisma/schema.prisma", "prisma.config.ts"],
+      "dependsOn": ["^generate"],
       "outputs": ["src/generated/**"]
     },
     "build": {
-      "dependsOn": ["^generate", "generate"],
+      "dependsOn": ["transit", "generate"],
       "env": ["NEXT_PUBLIC_*"],
       "outputs": [".next/**", "!.next/cache/**"]
     },
     "dev": {
-      "dependsOn": ["^generate", "generate"],
+      "dependsOn": ["transit", "generate"],
       "cache": false,
       "persistent": true
     },
     "lint": {
-      "dependsOn": ["^generate", "generate"]
+      "dependsOn": ["transit", "generate"]
     },
     "typecheck": {
-      "dependsOn": ["^generate", "generate"]
+      "dependsOn": ["transit", "generate"]
     },
     "test": {
-      "dependsOn": ["^generate", "generate"]
+      "dependsOn": ["transit", "generate"]
     },
     "test:integration": {
-      "dependsOn": ["^generate", "generate"],
+      "dependsOn": ["transit", "generate"],
+      "cache": false
+    },
+    "test:smoke": {
+      "dependsOn": ["build"],
+      "env": ["NEXT_PUBLIC_*"],
       "cache": false
     }
   }

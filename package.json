@@ -7,12 +7,13 @@
     "node": ">=24.11.0 <25"
   },
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --env-mode=loose",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:integration": "turbo run test:integration --concurrency=1",
+    "test:smoke": "turbo run test:smoke --concurrency=1",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:validate": "pnpm --filter @novyra/db run validate",
@@ -20,10 +21,10 @@
     "db:migrate:dev": "pnpm --filter @novyra/db run migrate:dev",
     "db:migrate:deploy": "pnpm --filter @novyra/db run migrate:deploy",
     "db:studio": "pnpm --filter @novyra/db run studio",
-    "db:typecheck": "pnpm --filter @novyra/db run typecheck",
-    "db:seed": "pnpm --filter @novyra/core run seed",
+    "db:typecheck": "pnpm db:generate && pnpm --filter @novyra/db run typecheck",
+    "db:seed": "pnpm db:generate && pnpm --filter @novyra/core run seed",
     "db:test:prepare": "pnpm --filter @novyra/db run test:prepare",
-    "db:test": "pnpm --filter @novyra/db run test:integration"
+    "db:test": "pnpm db:generate && pnpm --filter @novyra/db run test:integration"
   },
   "devDependencies": {
     "prettier": "3.9.10",

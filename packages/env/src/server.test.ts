@@ -1,8 +1,11 @@
+import { randomBytes } from "node:crypto";
+
 import { describe, expect, test } from "vitest";
 
 import { EnvValidationError, parseServerEnv } from "./server.ts";
 
 const valid = {
+  APP_ENV: "development",
   DATABASE_URL: "postgresql://novyra:novyra@localhost:5432/novyra",
   NEXT_PUBLIC_SITE_URL: "http://localhost:3000",
   ADMIN_URL: "http://localhost:3001",
@@ -13,6 +16,10 @@ describe("parseServerEnv", () => {
     const env = parseServerEnv(valid);
     expect(env.APP_ENV).toBe("development");
     expect(env.LOG_LEVEL).toBe("info");
+  });
+
+  test("requires APP_ENV, so a deployment can't fall back to development", () => {
+    expect(() => parseServerEnv({ ...valid, APP_ENV: undefined })).toThrow(/APP_ENV/);
   });
 
   test("treats empty strings as unset", () => {
@@ -59,7 +66,7 @@ describe("parseServerEnv", () => {
       NEXT_PUBLIC_SITE_URL: "https://novyra.pk",
       ADMIN_URL: "https://admin.novyra.pk",
       APP_ENV: "production",
-      DATA_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
+      DATA_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
       INTERNAL_API_SECRET: "x".repeat(48),
       CRON_SECRET: "y".repeat(48),
     });
@@ -70,5 +77,16 @@ describe("parseServerEnv", () => {
     expect(() =>
       parseServerEnv({ ...valid, DATA_ENCRYPTION_KEY: Buffer.alloc(16).toString("base64") }),
     ).toThrow(/DATA_ENCRYPTION_KEY must be 32 random bytes/);
+  });
+
+  test("rejects passphrases and placeholders that happen to decode to 32 bytes", () => {
+    for (const key of [
+      "changeme changeme changeme changeme changeme123",
+      "a".repeat(43) + "=",
+      Buffer.alloc(32, 7).toString("base64"),
+    ]) {
+      expect(Buffer.from(key, "base64")).toHaveLength(32);
+      expect(() => parseServerEnv({ ...valid, DATA_ENCRYPTION_KEY: key })).toThrow(/DATA_ENCRYPTION_KEY/);
+    }
   });
 });

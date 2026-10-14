@@ -19,7 +19,7 @@ env:
 
 jobs:
   checks:
-    name: Lint, typecheck, test, build
+    name: Lint, typecheck, test, build, smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 25
 
@@ -78,11 +78,13 @@ jobs:
           pnpm --filter @novyra/db exec prisma migrate diff
           --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code
 
-      - name: Lint
-        run: pnpm lint
-
+      # First turbo task on a clean checkout, so it also proves the task graph generates the Prisma
+      # client before anything compiles against it.
       - name: Typecheck
         run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
 
       - name: Unit tests
         run: pnpm test
@@ -98,3 +100,6 @@ jobs:
 
       - name: Build apps
         run: pnpm build
+
+      - name: Smoke tests on the built apps (headers, CSP nonce, request ids, health, env refusal)
+        run: pnpm test:smoke

@@ -1,7 +1,8 @@
 /**
  * The permission catalogue: the single source of truth for what staff can be allowed to do.
- * Code checks these keys; the seed syncs them into the `permissions` table. Roles are data
- * (editable by the owner), and the templates below seed the built-in system roles.
+ * Code checks these keys; the seed syncs them into the `permissions` table. The templates below
+ * define the built-in system roles, which are read-only: every seed resets them. The owner grants
+ * other combinations through custom roles, which the seed never touches.
  * Matrix and rationale: docs/03-security.md §4.
  */
 
