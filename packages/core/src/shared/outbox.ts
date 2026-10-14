@@ -45,13 +45,23 @@ export type OutboxHandler = (event: ClaimedOutboxEvent) => Promise<void>;
 
 export interface DispatchOptions {
   handlers: Readonly<Record<string, OutboxHandler>>;
-  /** Identifies this dispatcher in locked_by (e.g. "cron:<request id>"). */
+  /** Identifies this dispatcher run in locked_by (e.g. "cron:<request id>"). */
   workerId: string;
+  /** Most events handled in one run (default 50). */
   batchSize?: number;
-  /** After this many failed attempts the event is marked DEAD and needs a human (default 8). */
+  /** After this many attempts the event is marked DEAD and needs a human (default 8). */
   maxAttempts?: number;
-  /** PROCESSING rows locked longer than this are presumed abandoned and released (default 5 min). */
+  /**
+   * A PROCESSING event locked longer than this is presumed abandoned (its worker crashed, was killed
+   * or hung) and is retried, or marked DEAD once it has used maxAttempts (default 5 min). Keep it
+   * well above the slowest handler: a handler still running past it may be delivered twice.
+   */
   staleAfterMs?: number;
+  /**
+   * Stop claiming new events after this long, so a run finishes inside its platform's time limit
+   * (default: no limit). An event already claimed is always finished.
+   */
+  timeBudgetMs?: number;
   logger?: Logger;
 }
 
@@ -59,7 +69,9 @@ export interface DispatchStats {
   claimed: number;
   done: number;
   retried: number;
+  /** Events marked DEAD, including abandoned events that had used all their attempts. */
   dead: number;
+  /** Abandoned events returned to the queue for another attempt. */
   released: number;
   /** Finished after another worker had taken the event over; that worker's outcome stands. */
   lost: number;
@@ -87,8 +99,9 @@ interface ClaimedRow {
 }
 
 /**
- * Claims up to `batchSize` due events and runs their handlers. Concurrent dispatchers never claim
- * the same event (FOR UPDATE SKIP LOCKED).
+ * Handles up to `batchSize` due events, one at a time. Each event is claimed (FOR UPDATE SKIP
+ * LOCKED) just before its handler runs, so concurrent dispatchers never claim the same event and a
+ * long run never holds events it has not started.
  */
 export async function dispatchOutbox(prisma: PrismaClient, options: DispatchOptions): Promise<DispatchStats> {
   const {
@@ -97,29 +110,47 @@ export async function dispatchOutbox(prisma: PrismaClient, options: DispatchOpti
     batchSize = 50,
     maxAttempts = 8,
     staleAfterMs = 5 * 60 * 1000,
+    timeBudgetMs = Number.POSITIVE_INFINITY,
     logger,
   } = options;
   const stats: DispatchStats = { claimed: 0, done: 0, retried: 0, dead: 0, released: 0, lost: 0 };
+  const startedAt = Date.now();
 
-  stats.released = await prisma.$executeRaw`
+  // Abandoned events count as a failed attempt: retried after the stale window, or DEAD when out of
+  // attempts, so an event whose handler never returns cannot cycle forever.
+  const abandoned = await prisma.$queryRaw<{ id: string; type: string; attempts: number; dead: boolean }[]>`
     UPDATE outbox_events
-       SET status = 'PENDING', locked_at = NULL, locked_by = NULL
+       SET status = CASE WHEN attempts >= ${maxAttempts} THEN 'DEAD'::outbox_status
+                         ELSE 'PENDING'::outbox_status END,
+           locked_at = NULL,
+           locked_by = NULL,
+           last_error = 'Abandoned: no result within the stale window (worker crashed, killed or hung)'
      WHERE status = 'PROCESSING'
-       AND locked_at < now() - make_interval(secs => ${staleAfterMs / 1000})`;
+       AND locked_at < now() - make_interval(secs => ${staleAfterMs / 1000})
+    RETURNING id, type, attempts, status = 'DEAD' AS dead`;
+  for (const row of abandoned) {
+    if (row.dead) {
+      stats.dead++;
+      logger?.error({ eventId: row.id, type: row.type, attempts: row.attempts }, "outbox event is dead");
+    } else {
+      stats.released++;
+    }
+  }
 
-  const claimed = await prisma.$queryRaw<ClaimedRow[]>`
-    UPDATE outbox_events
-       SET status = 'PROCESSING', locked_at = now(), locked_by = ${workerId}, attempts = attempts + 1
-     WHERE id IN (
-       SELECT id FROM outbox_events
-        WHERE status = 'PENDING' AND available_at <= now()
-        ORDER BY available_at
-        LIMIT ${batchSize}
-        FOR UPDATE SKIP LOCKED)
-    RETURNING id, type, aggregate_type, aggregate_id, payload, attempts`;
-  stats.claimed = claimed.length;
+  while (stats.claimed < batchSize && Date.now() - startedAt < timeBudgetMs) {
+    const [row] = await prisma.$queryRaw<ClaimedRow[]>`
+      UPDATE outbox_events
+         SET status = 'PROCESSING', locked_at = now(), locked_by = ${workerId}, attempts = attempts + 1
+       WHERE id = (
+         SELECT id FROM outbox_events
+          WHERE status = 'PENDING' AND available_at <= now()
+          ORDER BY available_at
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED)
+      RETURNING id, type, aggregate_type, aggregate_id, payload, attempts`;
+    if (!row) break;
+    stats.claimed++;
 
-  for (const row of claimed) {
     const event: ClaimedOutboxEvent = {
       id: row.id,
       type: row.type,
@@ -128,8 +159,14 @@ export async function dispatchOutbox(prisma: PrismaClient, options: DispatchOpti
       payload: row.payload,
       attempts: row.attempts,
     };
-    // Only touch the row while this worker still holds it.
-    const ours = { id: event.id, status: "PROCESSING" as const, lockedBy: workerId };
+    // Only touch the row while this claim still holds it. Every claim increments attempts, so
+    // (lockedBy, attempts) identifies this claim even if a worker id is reused.
+    const ours = {
+      id: event.id,
+      status: "PROCESSING" as const,
+      lockedBy: workerId,
+      attempts: event.attempts,
+    };
     const handler = handlers[event.type];
 
     try {

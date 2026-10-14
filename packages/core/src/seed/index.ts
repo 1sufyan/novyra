@@ -1,7 +1,7 @@
 import { ALL_PERMISSIONS, PERMISSIONS, ROLE_TEMPLATES } from "@novyra/auth/permissions";
 import { withTransaction, type Prisma, type PrismaClient, type Tx } from "@novyra/db";
 
-import { SETTING_KEYS, defaultSettings } from "../settings/index.ts";
+import { SETTING_KEYS, defaultSettings } from "../settings/settings.ts";
 import {
   DEFAULT_LOCATION,
   DEFAULT_ZONE,

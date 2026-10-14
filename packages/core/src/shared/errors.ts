@@ -11,6 +11,7 @@ export type ErrorCode =
   | "not_found"
   | "conflict"
   | "idempotency_conflict"
+  | "idempotency_key_reused"
   | "rate_limited"
   | "integration_not_configured"
   | "webhook_verification_failed"
@@ -23,6 +24,7 @@ const STATUS: Record<ErrorCode, number> = {
   not_found: 404,
   conflict: 409,
   idempotency_conflict: 409,
+  idempotency_key_reused: 422,
   rate_limited: 429,
   integration_not_configured: 503,
   webhook_verification_failed: 401,

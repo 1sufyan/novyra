@@ -3,15 +3,25 @@ import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, test } from "vitest";
 
 import { testPrisma } from "../../tests/db.ts";
+import { toPublicError } from "./errors.ts";
 import {
   IdempotencyConflictError,
   beginIdempotentRequest,
   completeIdempotentRequest,
+  failIdempotentRequest,
   runIdempotent,
 } from "./idempotency.ts";
 
 const prisma = testPrisma();
 afterAll(() => prisma.$disconnect());
+
+const lapse = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+async function proceed(input: Parameters<typeof beginIdempotentRequest>[1]) {
+  const begun = await beginIdempotentRequest(prisma, input);
+  if (begun.kind !== "proceed") throw new Error("expected proceed");
+  return begun.record;
+}
 
 const request = (overrides: Record<string, unknown> = {}) => ({
   scope: "test.command",
@@ -60,6 +70,10 @@ describe("idempotency", () => {
     await expect(beginIdempotentRequest(prisma, { ...input, subject: "cart-2" })).rejects.toMatchObject({
       reason: "request_mismatch",
     });
+    const mismatch = await beginIdempotentRequest(prisma, { ...input, request: { other: true } }).catch(
+      (error: unknown) => error,
+    );
+    expect(toPublicError(mismatch)).toMatchObject({ code: "idempotency_key_reused", status: 422 });
   });
 
   test("concurrent duplicates: exactly one proceeds, the rest see in_progress", async () => {
@@ -96,6 +110,54 @@ describe("idempotency", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     const takeover = await beginIdempotentRequest(prisma, input);
     expect(takeover.kind).toBe("proceed");
+  });
+
+  test("after a takeover, the earlier attempt can neither complete nor release the key", async () => {
+    const input = request({ lockMs: 1 });
+    const stale = await proceed(input);
+    await lapse();
+    const current = await proceed({ ...input, lockMs: 60_000 });
+
+    await expect(completeIdempotentRequest(prisma, stale, { response: "stale" })).rejects.toMatchObject({
+      reason: "lock_lost",
+    });
+    expect(await failIdempotentRequest(prisma, stale)).toBe(false);
+    await expect(beginIdempotentRequest(prisma, input)).rejects.toMatchObject({ reason: "in_progress" });
+
+    await completeIdempotentRequest(prisma, current, { response: "current" });
+    const replay = await beginIdempotentRequest(prisma, input);
+    expect(replay).toMatchObject({ kind: "replay", response: "current" });
+  });
+
+  test("a lost lock rolls back the earlier attempt's transaction", async () => {
+    const input = request({ lockMs: 1 });
+    const stale = await proceed(input);
+    await lapse();
+    await proceed({ ...input, lockMs: 60_000 });
+
+    const aggregateId = randomUUID();
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await tx.outboxEvent.create({
+          data: { type: "test.order_placed", aggregateType: "order", aggregateId, payload: {} },
+        });
+        await completeIdempotentRequest(tx, stale, { response: "stale" });
+      }),
+    ).rejects.toBeInstanceOf(IdempotencyConflictError);
+    expect(await prisma.outboxEvent.count({ where: { aggregateId } })).toBe(0);
+  });
+
+  test("a handler that succeeded is not run again when storing its response fails", async () => {
+    const input = request();
+    let runs = 0;
+    // PostgreSQL rejects \u0000 in jsonb, so the completion write fails after the handler ran.
+    const handler = async () => {
+      runs++;
+      return { response: { providerRef: "PX-1", note: "ok\u0000" } };
+    };
+    await expect(runIdempotent(prisma, input, handler)).rejects.toThrow();
+    await expect(runIdempotent(prisma, input, handler)).rejects.toMatchObject({ reason: "in_progress" });
+    expect(runs).toBe(1);
   });
 
   test("completion can be written inside the caller's transaction", async () => {

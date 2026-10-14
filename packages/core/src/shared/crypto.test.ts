@@ -71,6 +71,17 @@ describe("field cipher (AES-256-GCM)", () => {
     expect(() => cipher.decrypt("v1:not-valid", "aad")).toThrow(DecryptionError);
   });
 
+  test("rejects a truncated authentication tag", () => {
+    const cipher = createFieldCipher({ v1: key() }, "v1");
+    const [version, payload] = cipher.encrypt("PK36SCBL0000001123456702", "aad").split(":") as [
+      string,
+      string,
+    ];
+    const [iv, tag, body] = payload.split(".") as [string, string, string];
+    const short = Buffer.from(tag, "base64url").subarray(0, 4).toString("base64url");
+    expect(() => cipher.decrypt(`${version}:${iv}.${short}.${body}`, "aad")).toThrow(DecryptionError);
+  });
+
   test("supports key rotation: old ciphertexts stay readable, new ones use the current key", () => {
     const v1 = key();
     const old = createFieldCipher({ v1 }, "v1").encrypt("legacy", "aad");
@@ -81,7 +92,13 @@ describe("field cipher (AES-256-GCM)", () => {
   });
 
   test("rejects bad keys and versions", () => {
-    expect(() => createFieldCipher({ v1: randomBytes(16).toString("base64") }, "v1")).toThrow(/32 bytes/);
+    expect(() => createFieldCipher({ v1: randomBytes(16).toString("base64") }, "v1")).toThrow(
+      /32 random bytes/,
+    );
+    // Decodes to 32 bytes with Node's lenient decoder, but is not base64 of a key.
+    expect(() => createFieldCipher({ v1: "changeme changeme changeme changeme changeme123" }, "v1")).toThrow(
+      /32 random bytes/,
+    );
     expect(() => createFieldCipher({ key1: key() }, "key1")).toThrow(/Invalid key version/);
     expect(() => createFieldCipher({ v1: key() }, "v2")).toThrow(/No key/);
   });

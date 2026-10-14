@@ -78,6 +78,41 @@ describe("withTransaction", () => {
     );
   });
 
+  test("retries a SERIALIZABLE write-skew conflict raised at commit", async () => {
+    const { a, b } = await createTwoStockRows();
+    let calls = 0;
+    // Each transaction reads both rows, then writes its own: a read/write dependency cycle that
+    // PostgreSQL breaks by failing one COMMIT with 40001.
+    const writeSkew = (ownId: string) => async (tx: Tx) => {
+      calls++;
+      await tx.$queryRaw`SELECT sum(on_hand) FROM inventory_levels WHERE id IN (${a.id}::uuid, ${b.id}::uuid)`;
+      await tx.$executeRaw`SELECT pg_sleep(0.3)`;
+      await tx.$executeRaw`UPDATE inventory_levels SET on_hand = on_hand + 1 WHERE id = ${ownId}::uuid`;
+    };
+    const options = { isolationLevel: "Serializable" as const };
+
+    const unretried = await Promise.allSettled([
+      withTransaction(prisma, writeSkew(a.id), { ...options, maxRetries: 0 }),
+      withTransaction(prisma, writeSkew(b.id), { ...options, maxRetries: 0 }),
+    ]);
+    const failures = unretried.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    assert.equal(failures.length, 1, "PostgreSQL fails exactly one side");
+    assert.ok(isRetryableTransactionError(failures[0]!.reason), String(failures[0]!.reason));
+
+    calls = 0;
+    await Promise.all([
+      withTransaction(prisma, writeSkew(a.id), options),
+      withTransaction(prisma, writeSkew(b.id), options),
+    ]);
+    assert.ok(calls >= 3, `the victim ran again (calls: ${calls})`);
+    const rows = await prisma.inventoryLevel.findMany({ where: { id: { in: [a.id, b.id] } } });
+    assert.equal(
+      rows.reduce((total, row) => total + row.onHand, 0),
+      23,
+      "one commit from the unretried round and both from the retried round",
+    );
+  });
+
   test("rolls back and does not retry ordinary failures", async () => {
     const { a } = await createTwoStockRows();
     let calls = 0;
@@ -113,6 +148,12 @@ describe("isRetryableTransactionError", () => {
     assert.equal(isRetryableTransactionError({ code: "P2034" }), true);
     assert.equal(isRetryableTransactionError({ code: "40001" }), true);
     assert.equal(isRetryableTransactionError(new Error("wrapped", { cause: { code: "40P01" } })), true);
+    assert.equal(
+      isRetryableTransactionError(
+        new Error("commit", { cause: { kind: "TransactionWriteConflict", originalCode: "40001" } }),
+      ),
+      true,
+    );
     assert.equal(isRetryableTransactionError({ code: "23505" }), false);
     assert.equal(isRetryableTransactionError(new Error("plain")), false);
     assert.equal(isRetryableTransactionError(undefined), false);

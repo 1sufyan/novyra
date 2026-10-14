@@ -133,6 +133,70 @@ describe("outbox dispatcher", () => {
     expect(stats).toMatchObject({ released: 1, claimed: 1, done: 1 });
   });
 
+  test("an abandoned event that has used all its attempts is DEAD, not retried forever", async () => {
+    await enqueue("shipping.book");
+    const event = await prisma.outboxEvent.findFirstOrThrow();
+    await prisma.outboxEvent.update({
+      where: { id: event.id },
+      data: {
+        status: "PROCESSING",
+        lockedBy: "killed",
+        lockedAt: new Date(Date.now() - 10 * 60 * 1000),
+        attempts: 3,
+      },
+    });
+    let calls = 0;
+    const stats = await dispatchOutbox(prisma, {
+      workerId: "w2",
+      maxAttempts: 3,
+      handlers: { "shipping.book": async () => void calls++ },
+    });
+    expect(stats).toMatchObject({ dead: 1, released: 0, claimed: 0 });
+    expect(calls).toBe(0);
+    const row = await prisma.outboxEvent.findFirstOrThrow();
+    expect(row).toMatchObject({ status: "DEAD", lockedBy: null });
+    expect(row.lastError).toContain("Abandoned");
+  });
+
+  test("a slow run does not hold events it has not started, so none is delivered twice", async () => {
+    await enqueue("email.send", 4);
+    const deliveries: string[] = [];
+    const slow =
+      (worker: string): OutboxHandler =>
+      async (event) => {
+        deliveries.push(`${worker}:${event.aggregateId}`);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      };
+    const options = { batchSize: 4, staleAfterMs: 750 };
+    const first = dispatchOutbox(prisma, {
+      ...options,
+      workerId: "a",
+      handlers: { "email.send": slow("a") },
+    });
+    // Starts after the first run's claim time plus the stale window, while it is still working.
+    await new Promise((resolve) => setTimeout(resolve, 850));
+    const second = await dispatchOutbox(prisma, {
+      ...options,
+      workerId: "b",
+      handlers: { "email.send": slow("b") },
+    });
+    const firstStats = await first;
+    const delivered = deliveries.map((entry) => entry.split(":")[1]).sort();
+    expect(delivered).toEqual(["0", "1", "2", "3"]);
+    expect(firstStats.lost + second.lost + second.released).toBe(0);
+  });
+
+  test("stops claiming once its time budget is spent", async () => {
+    await enqueue("email.send", 3);
+    const stats = await dispatchOutbox(prisma, {
+      workerId: "w1",
+      timeBudgetMs: 200,
+      handlers: { "email.send": () => new Promise((resolve) => setTimeout(resolve, 300)) },
+    });
+    expect(stats).toMatchObject({ claimed: 1, done: 1 });
+    expect(await prisma.outboxEvent.count({ where: { status: "PENDING" } })).toBe(2);
+  });
+
   test("a worker that lost its lock cannot overwrite another worker's result", async () => {
     await enqueue("order.placed");
     const stats = await dispatchOutbox(prisma, {
@@ -148,5 +212,23 @@ describe("outbox dispatcher", () => {
     const row = await prisma.outboxEvent.findFirstOrThrow();
     expect(row.status).toBe("PROCESSING");
     expect(row.lockedBy).toBe("other");
+  });
+
+  test("a reused worker id cannot overwrite a newer claim of the same event", async () => {
+    await enqueue("order.placed");
+    const stats = await dispatchOutbox(prisma, {
+      workerId: "cron",
+      handlers: {
+        "order.placed": async (event) => {
+          // The event was released and claimed again by another run that uses the same id.
+          await prisma.outboxEvent.update({
+            where: { id: event.id },
+            data: { attempts: event.attempts + 1, lockedAt: new Date() },
+          });
+        },
+      },
+    });
+    expect(stats).toMatchObject({ done: 0, lost: 1 });
+    expect((await prisma.outboxEvent.findFirstOrThrow()).status).toBe("PROCESSING");
   });
 });

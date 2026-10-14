@@ -5,12 +5,22 @@ import { PrismaClient } from "./generated/prisma/client.ts";
 export interface CreatePrismaClientOptions {
   /** Maximum pooled connections for this process (default 10). Keep it low behind a pooler. */
   maxConnections?: number;
+  /**
+   * Give up opening a connection after this long (default 5 s). node-postgres otherwise waits
+   * forever, so an unresponsive database or pooler would hang every request instead of failing.
+   */
+  connectionTimeoutMs?: number;
 }
 
 /** Creates a client over node-postgres. Prefer `getPrisma()` in application code. */
 export function createPrismaClient(connectionString: string, options: CreatePrismaClientOptions = {}) {
   return new PrismaClient({
-    adapter: new PrismaPg({ connectionString, max: options.maxConnections ?? 10 }),
+    adapter: new PrismaPg({
+      connectionString,
+      max: options.maxConnections ?? 10,
+      connectionTimeoutMillis: options.connectionTimeoutMs ?? 5_000,
+      idleTimeoutMillis: 30_000,
+    }),
   });
 }
 

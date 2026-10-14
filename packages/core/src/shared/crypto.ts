@@ -62,7 +62,18 @@ export function verifyHmacSha256Hex(
 
 const ALGORITHM = "aes-256-gcm";
 const IV_BYTES = 12;
+/** Full-length tags only: Node would otherwise accept a tag truncated to 4 bytes. */
+const TAG_BYTES = 16;
 const VERSION_PATTERN = /^v\d+$/;
+
+/**
+ * Decodes a key given as canonical base64 of exactly 32 bytes. Node's decoder skips invalid
+ * characters, so a passphrase can decode to 32 bytes; requiring the canonical form rejects it.
+ */
+export function decodeEncryptionKey(encoded: string): Buffer | undefined {
+  const key = Buffer.from(encoded, "base64");
+  return key.length === 32 && key.toString("base64") === encoded ? key : undefined;
+}
 
 export class DecryptionError extends Error {
   override name = "DecryptionError";
@@ -85,8 +96,8 @@ export function createFieldCipher(
   for (const [version, encoded] of Object.entries(keys)) {
     if (!VERSION_PATTERN.test(version))
       throw new Error(`Invalid key version "${version}" (expected v1, v2, …)`);
-    const key = Buffer.from(encoded, "base64");
-    if (key.length !== 32) throw new Error(`Encryption key ${version} must be 32 bytes (base64-encoded)`);
+    const key = decodeEncryptionKey(encoded);
+    if (!key) throw new Error(`Encryption key ${version} must be 32 random bytes, base64-encoded`);
     keyring.set(version, key);
   }
   const currentKey = keyring.get(currentVersion);
@@ -95,7 +106,7 @@ export function createFieldCipher(
   return {
     encrypt(plaintext, aad) {
       const iv = randomBytes(IV_BYTES);
-      const cipher = createCipheriv(ALGORITHM, currentKey, iv);
+      const cipher = createCipheriv(ALGORITHM, currentKey, iv, { authTagLength: TAG_BYTES });
       cipher.setAAD(Buffer.from(aad, "utf8"));
       const body = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
       const tag = cipher.getAuthTag();
@@ -108,8 +119,10 @@ export function createFieldCipher(
       const parts = payload.split(".");
       if (parts.length !== 3) throw new DecryptionError("Malformed ciphertext");
       const [iv, tag, body] = parts.map((part) => Buffer.from(part, "base64url")) as [Buffer, Buffer, Buffer];
+      if (iv.length !== IV_BYTES || tag.length !== TAG_BYTES)
+        throw new DecryptionError("Malformed ciphertext");
       try {
-        const decipher = createDecipheriv(ALGORITHM, key, iv);
+        const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_BYTES });
         decipher.setAAD(Buffer.from(aad, "utf8"));
         decipher.setAuthTag(tag);
         return Buffer.concat([decipher.update(body), decipher.final()]).toString("utf8");

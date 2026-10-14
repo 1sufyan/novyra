@@ -24,20 +24,29 @@ function isRetryableCode(code: unknown): boolean {
   return typeof code === "string" && (RETRYABLE_SQLSTATES.has(code) || RETRYABLE_PRISMA_CODES.has(code));
 }
 
+/** @prisma/adapter-pg's name for 40001 and 40P01. */
+const WRITE_CONFLICT_KIND = "TransactionWriteConflict";
+
 /** True when the database rolled the transaction back because of a write conflict or deadlock. */
 export function isRetryableTransactionError(error: unknown): boolean {
   const seen = new Set<unknown>();
   let current: unknown = error;
-  // Driver adapters nest the original database error under `cause`.
+  // Driver adapters nest the original database error under `cause`. A conflict inside a statement
+  // arrives as a Prisma error with meta.driverAdapterError; one raised at COMMIT (SERIALIZABLE)
+  // arrives as a bare DriverAdapterError whose cause is { kind, originalCode }.
   while (current && typeof current === "object" && !seen.has(current)) {
     seen.add(current);
     const candidate = current as {
       code?: unknown;
+      kind?: unknown;
+      originalCode?: unknown;
       meta?: { code?: unknown; driverAdapterError?: { cause?: { originalCode?: unknown } } };
       cause?: unknown;
     };
     if (
+      candidate.kind === WRITE_CONFLICT_KIND ||
       isRetryableCode(candidate.code) ||
+      isRetryableCode(candidate.originalCode) ||
       isRetryableCode(candidate.meta?.code) ||
       isRetryableCode(candidate.meta?.driverAdapterError?.cause?.originalCode)
     ) {

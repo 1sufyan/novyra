@@ -1779,6 +1779,8 @@ model IdempotencyKey {
   resourceType   String?           @map("resource_type") @db.VarChar(64)
   resourceId     String?           @map("resource_id") @db.VarChar(64)
   lockedUntil    DateTime?         @map("locked_until") @db.Timestamptz(3)
+  /// Fencing token of the attempt holding the key; completion and release require it.
+  lockToken      String?           @map("lock_token") @db.Uuid
   expiresAt      DateTime          @map("expires_at") @db.Timestamptz(3)
   createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)

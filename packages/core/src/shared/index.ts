@@ -1,3 +1,5 @@
+import "server-only";
+
 export * from "./crypto.ts";
 export * from "./errors.ts";
 export * from "./health.ts";
