@@ -2,8 +2,25 @@ packages:
   - "apps/*"
   - "packages/*"
 
-# Only these dependencies may run install scripts (supply-chain hardening).
+# Install scripts are deny-by-default (supply-chain hardening, docs/00-tech-stack.md).
+# true = may run its install script; false = reviewed and deliberately not run.
 allowBuilds:
   "@prisma/engines": true
   prisma: true
   esbuild: true
+  # Ships prebuilt binaries as optional dependencies; its postinstall is only a download fallback.
+  unrs-resolver: false
+
+minimumReleaseAgeExclude:
+  - "@typescript-eslint/eslint-plugin@8.71.2"
+  - "@typescript-eslint/parser@8.71.2"
+  - "@typescript-eslint/project-service@8.71.2"
+  - "@typescript-eslint/scope-manager@8.71.2"
+  - "@typescript-eslint/tsconfig-utils@8.71.2"
+  - "@typescript-eslint/type-utils@8.71.2"
+  - "@typescript-eslint/types@8.71.2"
+  - "@typescript-eslint/typescript-estree@8.71.2"
+  - "@typescript-eslint/utils@8.71.2"
+  - "@typescript-eslint/visitor-keys@8.71.2"
+  - typescript-eslint@8.71.2
+  - zod@4.6.7

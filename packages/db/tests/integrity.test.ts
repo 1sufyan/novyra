@@ -5,7 +5,7 @@
  * including under concurrency. Run against a DISPOSABLE database with all
  * migrations applied:
  *
- *   pnpm db:test:prepare && pnpm db:test      (TEST_DATABASE_URL from novyra/.env or the shell)
+ *   pnpm db:test:prepare && pnpm db:test      (TEST_DATABASE_URL from the root .env or the shell)
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -29,7 +29,10 @@ const suffix = () => randomUUID().slice(0, 8);
 /** Asserts that `action` fails because of the named constraint / index / trigger. */
 async function rejectsWith(action: () => Promise<unknown>, pattern: RegExp) {
   await assert.rejects(action, (error: unknown) => {
-    const detail = error instanceof Error ? `${error.message} ${JSON.stringify((error as { meta?: unknown }).meta ?? {})}` : String(error);
+    const detail =
+      error instanceof Error
+        ? `${error.message} ${JSON.stringify((error as { meta?: unknown }).meta ?? {})}`
+        : String(error);
     assert.match(detail, pattern);
     return true;
   });
@@ -47,11 +50,15 @@ async function createStockedVariant(onHand: number) {
       slug: `ring-${suffix()}`,
       name: "Solitaire Ring",
       status: "ACTIVE",
-      variants: { create: { sku: `NV-RING-${suffix()}`, title: "18K Gold / 7", price: "250000.00", isDefault: true } },
+      variants: {
+        create: { sku: `NV-RING-${suffix()}`, title: "18K Gold / 7", price: "250000.00", isDefault: true },
+      },
     },
     include: { variants: true },
   });
-  const location = await prisma.inventoryLocation.create({ data: { code: `LOC-${suffix()}`, name: "Vault" } });
+  const location = await prisma.inventoryLocation.create({
+    data: { code: `LOC-${suffix()}`, name: "Vault" },
+  });
   const level = await prisma.inventoryLevel.create({
     data: { variantId: product.variants[0]!.id, locationId: location.id, onHand },
   });
@@ -82,7 +89,10 @@ async function createOrder(totals: { subtotal: string; shipping: string; total: 
 
 describe("identity", () => {
   test("emails must be stored lower-case", async () => {
-    await rejectsWith(() => createUser({ email: `Mixed-${suffix()}@Example.com` }), /users_email_lowercase_chk/);
+    await rejectsWith(
+      () => createUser({ email: `Mixed-${suffix()}@Example.com` }),
+      /users_email_lowercase_chk/,
+    );
   });
 });
 
@@ -223,14 +233,20 @@ describe("customers", () => {
       isDefaultShipping: true,
     };
     await prisma.address.create({ data: address });
-    await rejectsWith(() => prisma.address.create({ data: address }), /addresses_one_default_shipping_per_user_uq|Unique constraint/);
+    await rejectsWith(
+      () => prisma.address.create({ data: address }),
+      /addresses_one_default_shipping_per_user_uq|Unique constraint/,
+    );
   });
 
   test("review ratings are 1-5", async () => {
     const user = await createUser();
     const { product } = await createStockedVariant(1);
     await rejectsWith(
-      () => prisma.review.create({ data: { productId: product.id, userId: user.id, rating: 6, body: "Exquisite." } }),
+      () =>
+        prisma.review.create({
+          data: { productId: product.id, userId: user.id, rating: 6, body: "Exquisite." },
+        }),
       /reviews_rating_chk/,
     );
   });
@@ -240,7 +256,13 @@ describe("audit log", () => {
   test("is append-only, but survives deletion of the actor", async () => {
     const actor = await createUser();
     const log = await prisma.auditLog.create({
-      data: { actorType: "STAFF", actorId: actor.id, action: "product.update", entityType: "product", entityId: "x" },
+      data: {
+        actorType: "STAFF",
+        actorId: actor.id,
+        action: "product.update",
+        entityType: "product",
+        entityId: "x",
+      },
     });
 
     await rejectsWith(
@@ -260,7 +282,12 @@ describe("outbox", () => {
   test("concurrent dispatchers never claim the same event", async () => {
     const type = `test.event.${suffix()}`;
     await prisma.outboxEvent.createMany({
-      data: Array.from({ length: 6 }, (_, i) => ({ type, aggregateType: "test", aggregateId: String(i), payload: {} })),
+      data: Array.from({ length: 6 }, (_, i) => ({
+        type,
+        aggregateType: "test",
+        aggregateId: String(i),
+        payload: {},
+      })),
     });
 
     const claim = (worker: string) =>

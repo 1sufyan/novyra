@@ -1,0 +1,4 @@
+{
+  "extends": "@novyra/config/tsconfig/base.json",
+  "include": ["src/**/*.ts", "*.config.ts"]
+}

@@ -1,0 +1,4 @@
+{
+  "extends": "@novyra/config/tsconfig/nextjs.json",
+  "include": ["next-env.d.ts", "*.ts", "src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", ".next/types/**/*.ts"]
+}

@@ -1,0 +1,10 @@
+pnpm-lock.yaml
+**/node_modules/
+**/.next/
+**/.turbo/
+**/dist/
+**/coverage/
+packages/db/src/generated/
+packages/db/prisma/migrations/
+# Hand-written prose and tables: formatted by review, not by Prettier.
+*.md

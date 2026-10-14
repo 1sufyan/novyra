@@ -27,28 +27,31 @@ critical path in Pakistan. **Start those applications now.** Phases 5 and 6 can 
 
 ---
 
-### Phase 0: Foundations
+### Phase 0: Foundations ✅ (code complete)
 
-**Done in this change:** architecture docs, Prisma schema, initial migration, integrity-constraints migration,
-DB integrity test suite, `.env.example`, pnpm workspace.
+Done:
+- Architecture docs, Prisma schema, initial + integrity-constraints migrations, DB integrity tests, `.env.example`.
+- ✅ Project moved into the dedicated [`1sufyan/novyra`](https://github.com/1sufyan/novyra) repository with its history (D12).
+- ✅ Root tooling: pnpm workspace, Turborepo task graph, shared tsconfig / ESLint (with app import boundaries) / Prettier in `packages/config`, Renovate config, `.nvmrc`.
+- ✅ `docker-compose.yml`: PostgreSQL 17 (with shadow + test databases) and Mailpit.
+- ✅ `packages/env`: server/client Zod schemas; `check-env` refuses to build or start the apps with an invalid environment.
+- ✅ `packages/db`: Prisma client factory (`@prisma/adapter-pg`, one pool per process, connection timeout), `withTransaction()` with timeout and retry on serialization failures and deadlocks (tested with real deadlocks and SERIALIZABLE commit conflicts).
+- ✅ `packages/core`: shared kernel (`Money`, typed errors, `Result`, AES-GCM field encryption, HMAC, redacting logger, request context, idempotency with fencing tokens, transactional outbox + dispatcher, allowlisted `fetch`, health), settings with the decided defaults, idempotent seed.
+- ✅ `packages/auth`: permission catalogue + system role templates (the rest of the package is Phase 1).
+- ✅ CI (GitHub Actions): format → schema → drift → typecheck → lint → unit → migrate empty DB → seed twice → integration (real PostgreSQL) → build → smoke tests on the built apps.
+- ✅ `apps/storefront` and `apps/admin` Next.js 16 shells: placeholder page, security headers and CSP (admin: per-request nonce), request ids, `/api/health`, all covered by smoke tests.
 
-Remaining:
-- Move the project into the dedicated `novyra` repository with its history (D12), then continue there.
-- Root tooling: `turbo.json`, shared `tsconfig`/ESLint (with import-boundary rules)/Prettier in `packages/config`, Renovate config.
-- `docker-compose.yml`: PostgreSQL 17 + Mailpit.
-- `packages/env` (server/client Zod schemas, boot-time validation).
-- `packages/db`: `client.ts` (Prisma + `@prisma/adapter-pg`, singleton), `withTransaction()` with retry, **seed** (permissions, roles, cities with provinces, zones, shipping methods, `cod` + `bank_transfer` payment methods, default location, settings).
-- `packages/core/shared`: `Money`, error types, `Result`, logger with redaction, request context, idempotency helper, outbox writer + dispatcher skeleton, allowlisted `fetch`.
-- CI (GitHub Actions): install → lint → typecheck → unit tests → Postgres service → `migrate deploy` → integrity tests → migration drift check → build.
-- Empty `apps/storefront` and `apps/admin` Next.js 16 shells (no UI yet) with security headers and `/api/health`.
+Remaining (needs accounts, not code):
+- Staging deploy: Vercel projects for both apps, a managed PostgreSQL, and the domains (decision D11). Once these exist, the health endpoints are checked on staging and Phase 0 is closed.
 
-**Exit:** CI green on a clean clone. `docker compose up && pnpm db:migrate:deploy && pnpm db:seed` works. Health endpoints return `ok` on staging.
+**Exit:** CI green on a clean clone ✅ · `docker compose up && pnpm db:migrate:deploy && pnpm db:seed` works ✅ · health endpoints return `ok` on staging (waiting on D11 and hosting accounts).
 
 ### Phase 1: Authentication, RBAC, audit
 
 - `packages/auth`: storefront and admin Better Auth instances, Argon2id, breached-password check, email verification, password reset, session management, TOTP 2FA (mandatory for staff), staff invitations.
 - Permission catalogue + guards (`requireUser`, `requirePermission`, `requireFreshSession`). `defineAction()` pipeline (validate → auth → authorise → rate limit → idempotency → audit).
 - Upstash rate limiting, Turnstile, audit log service, Resend sender + auth email templates.
+- Secret scanning before the first real credential exists: a gitleaks job in CI (plus a `pull_request` trigger) and GitHub push protection. A `pnpm audit --audit-level high` step joins CI at the same time.
 - **Tests:** authorisation matrix (every permission × every role), auth flows, rate-limit behaviour, CSRF origin checks, and a Better Auth ↔ schema test (sign-up with `generateId: "uuid"` writes UUIDv7 IDs).
 
 **Exit:** a staff member can be invited, enrol 2FA and sign in to admin. A customer can sign up, verify and reset. Every denial is audited.
@@ -131,7 +134,8 @@ Remaining:
 | Level | Scope | Tooling | Runs |
 |---|---|---|---|
 | Unit | Money, pricing, coupon rules, state machines, status mappings, signature helpers | Vitest | every PR |
-| Database integrity | CHECKs, partial indexes, triggers, concurrency patterns | `node:test` + real Postgres | every PR ✅ |
+| Database integrity | CHECKs, partial indexes, triggers, concurrency patterns | `node:test` + real Postgres | every push ✅ (PRs from forks once Phase 1 adds the `pull_request` trigger) |
+| App smoke | built apps: security headers, CSP nonces, request ids, health 200/503, refusal of an invalid environment at build and start | `node:test` + `next start` | every push ✅ |
 | Service integration | core services against a real DB (place order, cancel, refund, apply webhook twice) | Vitest + Postgres service container | every PR |
 | Provider contract | each payment/shipping adapter against recorded sandbox fixtures + shared contract suite | Vitest | every PR |
 | Authorisation matrix | every admin action × every role → allowed/denied as specified in 03 §4 | Vitest | every PR |
@@ -154,15 +158,15 @@ ones only change configuration, not design.
 | D1 | First online payment gateway | ✅ Decided | Apply to two in parallel: one wallet provider (JazzCash or Easypaisa) and one card provider (Safepay or PayFast). Integrate whichever approves first in Phase 5. Until then the store takes COD and bank transfer, which need no accounts. |
 | D2 | First courier API | ✅ Decided | Launch on the `manual` carrier. Get quotes from TCS, Leopards and PostEx, comparing COD remittance speed, insured high-value delivery and coverage in the main cities. Integrate the chosen courier in Phase 6. |
 | D3 | Pricing model | ✅ Decided | Fixed prices for v1. Gold-rate-linked pricing can be added later (a `metal_rates` table and a pricing strategy on variants) without breaking orders, because orders snapshot their prices. |
-| D4 | COD policy | ✅ Decided | COD allowed up to `settings.cod.max_order_total` (starting value PKR 50,000; the owner adjusts it in admin). Orders above it require an advance payment (amount set by the owner). WhatsApp or phone confirmation is mandatory for every COD order (`settings.cod.verification_required = true`). COD fee: none by default, configurable. |
+| D4 | COD policy | ✅ Decided | COD allowed up to the `cod.maxOrderTotalWithoutAdvance` setting (starting value PKR 50,000; the owner adjusts it in admin). Orders above it require an advance payment (amount set by the owner). WhatsApp or phone confirmation is mandatory for every COD order (`cod.verificationRequired = true`). COD fee: none by default, configurable. |
 | D5 | Languages | ✅ Decided | **English at launch, Urdu-ready from day one.** Storefront strings live in `next-intl` message files with a single `en` locale, components use logical start/end spacing and alignment, and no text is hard-coded. Adding Urdu later means translations, an `ur` locale and right-to-left QA, not a UI rebuild. Admin stays English-only. |
 | D6 | Hosting | ✅ Decided | Vercel Pro + managed PostgreSQL in the supported region nearest to Pakistan. |
 | D7 | Media vendor | ✅ Decided | Cloudinary. |
 | D8 | Returns policy | ✅ Decided | 7 days from delivery. Personalised and engraved items are non-returnable. Whether a given return ends in a refund or an exchange is chosen per return (`returns.resolution`). |
-| D9 | Tax | Open | Recommendation: tax-inclusive display (`prices_include_tax = true`). Confirm invoicing obligations with your tax advisor. |
+| D9 | Tax | Open | Recommendation: tax-inclusive display (`tax.pricesIncludeTax = true`). Confirm invoicing obligations with your tax advisor. |
 | D10 | Ad optimisation signal | Open | Recommendation: send `purchase` at placement plus a server-side `order_delivered` event, so ad platforms can bid on delivered revenue. Needed by Phase 7. |
 | D11 | Domains | Open | Confirm `novyra.pk` / `novyra.com` and the `admin.` subdomain before Phase 0 deploys to staging (cookies, CSP and email authentication depend on them). |
-| D12 | Repository | ✅ Decided | Move NOVYRA to a dedicated `novyra` GitHub repository, with its git history, at the start of Phase 0. |
+| D12 | Repository | ✅ Done | NOVYRA lives in its own repository, [`1sufyan/novyra`](https://github.com/1sufyan/novyra), with its git history (moved from `1sufyan/LocalRepo` at the start of Phase 0). |
 
 ## Accounts and credentials to request now
 

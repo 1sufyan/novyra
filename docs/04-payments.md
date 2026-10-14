@@ -233,9 +233,9 @@ stateDiagram-v2
 
 ### 5.1 Cash on Delivery (`cod`, flow `offline`), no external credentials
 
-1. Checkout checks eligibility: city has `is_cod_available`, phone limit not exceeded, and the order total is within `settings.cod.max_order_total` (starting value PKR 50,000). Above it, an advance payment is required, with the amount set by the owner (decision D4).
+1. Checkout checks eligibility: city has `is_cod_available`, phone limit not exceeded, and the order total is within `cod.maxOrderTotalWithoutAdvance` setting (starting value PKR 50,000). Above it, an advance payment is required, with the amount set by the owner (decision D4).
 2. `initiate()` returns `{ status: "pending", nextAction: { type: "none" } }`.
-3. `settings.cod.verification_required` is on (decision D4), so every COD order gets `cod_verification_status = PENDING`. A WhatsApp/SMS/email confirmation goes out, or staff call the customer. Staff (or the customer's confirmation link) set `VERIFIED` → order `CONFIRMED`.
+3. The `cod.verificationRequired` setting is on (decision D4), so every COD order gets `cod_verification_status = PENDING`. A WhatsApp/SMS/email confirmation goes out, or staff call the customer. Staff (or the customer's confirmation link) set `VERIFIED` → order `CONFIRMED`.
 4. The shipment is booked with `cod_amount = order total − captured advance`.
 5. Tracking `DELIVERED` → COD payment `CAPTURED` (amount = `cod_amount`). Finance later reconciles against the courier's remittance report (Phase 6+: `cod_remittances` import).
 6. RTO / delivery refused → payment `CANCELLED`, order fulfilment `RETURNED_TO_SENDER`, stock back after inspection.

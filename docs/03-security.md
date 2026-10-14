@@ -63,8 +63,10 @@ Guest order tracking needs **either** a signed, expiring link from the confirmat
 
 ### Role-based access control
 
-Permissions are code constants (`packages/auth/src/permissions.ts`), so a typo is a compile error. Roles are DB rows
-the owner can edit. Built-in role templates:
+Permissions are code constants (`packages/auth/src/permissions.ts`), so a typo is a compile error. Roles are DB rows.
+The six **system roles** below are read-only: the seed, which runs on every release, resets their permission sets to
+these templates. The owner customises access by creating **custom roles** (`roles.is_system = false`), which the seed
+never touches, and the role editor refuses to edit system roles. Built-in role templates:
 
 | Permission | owner | store_manager | finance | fulfilment | support | content_editor |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|
@@ -95,7 +97,7 @@ the owner can edit. Built-in role templates:
 | `audit:read` | ✓ | | ✓ | | | |
 
 Guard rails: staff can't change their own roles, the last `owner` can't be removed, refunds above
-`settings.refund_approval_threshold` need a second person with `refunds:approve`, and every permission change is audited.
+the `refunds.approvalThreshold` setting need a second person with `refunds:approve`, and every permission change is audited.
 
 ## 5. Input validation
 
@@ -157,7 +159,7 @@ and a phone blocklist plus RTO-history flag that drops risky orders into `ON_HOL
 - **Email / HTTP headers:** messages are sent through provider APIs with structured fields. CR/LF are stripped from any user value used in a subject or header.
 - **Path traversal:** storage keys are generated on the server (`products/<uuid>.<ext>`). User filenames are kept only as metadata.
 - **Log injection:** JSON-structured logs, never string concatenation.
-- **SSRF:** the server never fetches user-supplied URLs. Outbound HTTP goes through one `fetch` wrapper with a per-integration host allowlist, timeouts and no redirects to other hosts.
+- **SSRF:** the server never fetches user-supplied URLs. Outbound HTTP goes through one `fetch` wrapper (`createHttpClient`) with a per-integration host allowlist, https only and timeouts. Redirects are returned to the caller unless the integration opts in; followed redirects stay inside the allowlist and behave like `fetch()`: a 303 (or a 301/302 after a POST) becomes a body-less GET. Stricter than `fetch()`, a redirect to another origin keeps only `accept`, `accept-language` and `user-agent` (no `Authorization`, cookie or API-key header follows it), a request body is never sent on to another origin, and a streamed body is never re-sent.
 - **Open redirect:** `callbackURL` / `returnTo` must be relative paths starting with a single `/`.
 
 ## 10. Secure API endpoints
@@ -194,7 +196,7 @@ read raw body (no JSON re-serialisation)
 
 - Some Pakistani gateways sign callbacks with a shared salt over the request fields rather than a signed event. For those, the callback is treated as a **hint** and the authoritative status comes from the gateway's server-to-server **status inquiry API** before money state changes.
 - Out-of-order events are safe: transitions only move forward (e.g. `CAPTURED` is never overwritten by a late `PENDING`).
-- **Idempotency everywhere money or stock moves:** checkout (client key + `idempotency_keys`), payment initiation (`payments.idempotency_key`, passed to providers that support it), refunds (`refunds.idempotency_key`), courier bookings (`booking_idempotency_key` + lookup-by-reference before retrying a timed-out booking), notifications (`dedupe_key`), webhooks (`webhook_events` unique). A replayed key with a different request body returns 422.
+- **Idempotency everywhere money or stock moves:** checkout (client key + `idempotency_keys`), payment initiation (`payments.idempotency_key`, passed to providers that support it), refunds (`refunds.idempotency_key`), courier bookings (`booking_idempotency_key` + lookup-by-reference before retrying a timed-out booking), notifications (`dedupe_key`), webhooks (`webhook_events` unique). A replayed key with a different request body (or owner) returns 422 `idempotency_key_reused`, so the client mints a new key; a key whose first request is still running returns 409 `idempotency_conflict`, so the client retries later. Each attempt holds the key with a fencing token, and its lock is renewed while the work runs, so a retry can take the key over only after the attempt's process has died, or after renewals have failed for longer than the lock (database or pool unavailable). The earlier attempt can then no longer complete the key (a completion inside its transaction rolls back) or release it. Effects outside the database can't be rolled back, which is why provider calls also carry the idempotency key.
 - **PCI DSS scope:** card data never touches NOVYRA servers. Only provider-hosted pages or provider-hosted fields are used (SAQ A). PAN, CVV, wallet PINs and OTPs are never logged or stored.
 
 ## 12. Security headers
@@ -229,32 +231,34 @@ frame-ancestors 'none'; base-uri 'self'; object-src 'none'; upgrade-insecure-req
 
 > **Decision:** a nonce-based CSP forces every page to render dynamically, which would cost the cached catalog its speed.
 > The storefront starts with an allowlist CSP and `'unsafe-inline'` scripts. No staff session exists there and the
-> customer session cookie is `HttpOnly`. **Admin** uses `script-src 'nonce-…' 'strict-dynamic'` with no `'unsafe-inline'`.
+> customer session cookie is `HttpOnly`. **Admin** uses `script-src 'nonce-…' 'strict-dynamic'` with no `'unsafe-inline'`
+> scripts. Admin styles stay `'unsafe-inline'`: Next.js renders some `<style>` elements and `style` attributes without
+> the nonce, and a nonce can't cover attributes.
 > Revisit the storefront policy if Next.js adds hash-based CSP for prerendered pages.
 >
 > `form-action` must list the gateway's hosted-checkout origin. Redirect-POST gateways (common in Pakistan) fail without it.
 
 ## 13. Secrets and environment variables
 
-- **All secrets are server-only env vars**, validated at build and boot by `packages/env` (Zod). Missing or invalid → the app refuses to start. The full list is in [09-environment.md](09-environment.md).
+- **All secrets are server-only env vars**, validated by `packages/env` (Zod). Each app's `dev`, `build` and `start` script runs `check-env` first, so a missing or invalid variable fails the build or the start, and the error names the variable, never its value. The instrumentation hook re-checks at runtime and answers 500 rather than run misconfigured. The full list is in [09-environment.md](09-environment.md).
 - **Only `NEXT_PUBLIC_*` vars reach the browser**, and the env package's client schema allowlists exactly which ones. Each is a public identifier (site URL, GA measurement ID, Pixel ID, Turnstile site key, Cloudinary cloud name, Sentry DSN).
-- `packages/env/server.ts`, `packages/auth`, `packages/core` and `packages/db` import `server-only`, so bundling them for the client fails the build.
+- The app-facing server entry points (`@novyra/env/server`, `@novyra/core/platform`, `@novyra/core/shared`, `@novyra/core/settings` and each service module as it lands) import `server-only`, so bundling them for the client fails the build with a clear message. Apps can't import `@novyra/db` at all (ESLint). A client-safe piece (for example `Money` for price display) gets its own entry point when the UI needs it.
 - React's taint API (`experimental.taint`) marks secret values and server-only objects so they can't be passed to Client Components by accident.
 - Integration secrets (gateways, couriers, email) live **only** in env. The DB stores non-secret config (`payment_methods.settings`). Admin can't enable a provider whose env isn't configured.
 - Field-level encryption: `refunds.payout_details_encrypted` uses AES-256-GCM with `DATA_ENCRYPTION_KEY`, ciphertext prefixed with a key version (`v1:`) so keys can rotate.
 - Separate secrets per environment. Production secrets live only in the hosting provider's encrypted env store, with access limited to the owner.
-- **CI:** gitleaks secret scanning on every PR. `.env*` files are git-ignored (only `.env.example` is committed).
+- **Secret scanning:** `.env*` files are git-ignored (only `.env.example` is committed). A gitleaks job in CI and GitHub push protection are added in Phase 1 (docs/08), before any real credential exists.
 - **Database roles:** `novyra_app` (DML only, used at runtime), `novyra_migrator` (DDL, used by the release pipeline), `novyra_readonly` (reporting). The runtime role can't drop tables or disable the append-only triggers.
 
 ## 14. Uploads, PII and logging
 
 - Uploads are direct-to-storage with **signed, short-lived upload tickets** that fix folder, max size and MIME type. Afterwards the server re-reads the object's metadata from the provider before creating `media_assets`.
 - Payment proofs and shipping labels are `PRIVATE`. They're reachable only through signed URLs with a ≤ 5 min TTL, issued to the owning customer or staff with the right permission.
-- Logs redact passwords, tokens, cookies, secrets, emails, phones, IBANs and card-like numbers (pino `redact`). Sentry has PII scrubbing on.
-- The **audit log** records every staff mutation, permission denial, auth failure, webhook signature failure and data export, with actor, IP, user agent and request ID.
+- Logs never carry secrets or PII (`createLogger` in `packages/core`). Every logged object, binding and printf-style argument is walked (arrays and errors included; content nested more than 10 levels deep is replaced by `[truncated]`). A value whose key names a password, token, secret, API key, authorization, cookie, email, phone or mobile number, IBAN, account or card number, CVV, OTP, PIN or CNIC is replaced, whatever its case or separators (`otpCode`, `card_cvc` and `walletPin` included). Email addresses and card numbers (Luhn-valid digit runs) are masked inside strings, messages included, and card numbers held as numbers are replaced. Code still logs deliberately: data goes in the object argument, messages stay generic. Sentry has PII scrubbing on.
+- The **audit log** records every staff mutation, permission denial, auth failure, webhook signature failure and data export, with actor, IP, user agent and request ID. A client may supply its own request ID (any well-formed UUID is kept), so it correlates log lines but proves nothing about who sent the request.
 
 ## 15. Supply chain and delivery
 
-- Exact dependency pins + committed lockfile, `allowBuilds` allowlist for install scripts, Renovate grouped updates, `pnpm audit` gate.
+- Exact dependency pins + committed lockfile, `allowBuilds` allowlist for install scripts, Renovate grouped updates, and (from Phase 1, docs/08) a `pnpm audit` gate in CI.
 - GitHub Actions pinned to commit SHAs. Least-privilege `GITHUB_TOKEN`. Production deploys only from protected `main` with required review + green CI.
 - Pre-launch: OWASP ASVS L2 checklist, authorisation matrix tests (every admin action called with every role), dependency review, and a third-party penetration test before taking card payments.

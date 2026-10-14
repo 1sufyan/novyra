@@ -6,22 +6,25 @@
 novyra/
 ├── package.json                      ✅ workspace root, scripts, engines (Node 24), packageManager (pnpm 11)
 ├── pnpm-workspace.yaml               ✅ workspaces + allowBuilds (install-script allowlist)
-├── turbo.json                           task graph: lint → typecheck → test → build
+├── turbo.json                        ✅ task graph: generate (Prisma client) → lint · typecheck · test · build → smoke;
+│                                        a `transit` node keys each task's cache on the packages it imports
 ├── .env.example                      ✅ every env var, documented (see 09)
-├── .gitignore                        ✅
-├── docker-compose.yml                   local Postgres 17 + Mailpit (+ optional Redis)
+├── .gitignore · .nvmrc · .prettierrc.json · .prettierignore   ✅
+├── renovate.json                     ✅ weekly grouped updates, two-week wait for framework minors
+├── docker-compose.yml                ✅ local Postgres 17 + Mailpit
+├── docker/postgres/init.sql          ✅ creates the shadow and test databases
 ├── .github/workflows/
-│   ├── ci.yml                           lint · typecheck · unit · db integration (Postgres service) · migration drift · build
+│   ├── ci.yml                        ✅ format · schema · drift · typecheck · lint · unit · migrate · seed ×2 · integration · build · smoke
 │   └── release.yml                      migrate:deploy (migrator role) → deploy apps
 ├── docs/                             ✅ architecture (this folder)
 │
 ├── apps/
-│   ├── storefront/                      novyra.pk — Next.js 16
-│   │   ├── next.config.ts               headers/CSP, images loader, typedRoutes, reactCompiler, taint
+│   ├── storefront/                   ✅ novyra.pk — Next.js 16 (Phase 0: shell, placeholder page, health)
+│   │   ├── next.config.ts            ✅ security headers + CSP, typedRoutes (later: images loader, reactCompiler, taint)
 │   │   ├── messages/en.json             every storefront string (next-intl). Urdu later = messages/ur.json
 │   │   ├── src/
-│   │   │   ├── proxy.ts                 request id · cheap auth redirects (NOT a security boundary)
-│   │   │   ├── instrumentation.ts       Sentry / OpenTelemetry
+│   │   │   ├── proxy.ts              ✅ request id (later: cheap auth redirects; NOT a security boundary)
+│   │   │   ├── instrumentation.ts    ✅ re-checks the environment at runtime (later: Sentry / OpenTelemetry)
 │   │   │   ├── i18n/request.ts          next-intl config (single `en` locale at launch)
 │   │   │   ├── app/
 │   │   │   │   ├── layout.tsx · globals.css (imports @novyra/ui theme)
@@ -49,7 +52,7 @@ novyra/
 │   │   │   │       ├── payments/[provider]/return/route.ts
 │   │   │   │       ├── cron/[job]/route.ts
 │   │   │   │       ├── internal/dispatch/route.ts      HMAC-signed, admin → storefront
-│   │   │   │       └── health/route.ts
+│   │   │   │       └── health/route.ts     ✅ ok / degraded only
 │   │   │   ├── features/                feature slices: UI + server actions + queries, per domain
 │   │   │   │   ├── catalog/             product gallery, variant picker, listing filters
 │   │   │   │   ├── cart/                actions.ts (add/update/remove/merge), cart drawer
@@ -57,11 +60,13 @@ novyra/
 │   │   │   │   ├── account/ · reviews/ · wishlist/ · newsletter/ · consent/
 │   │   │   ├── components/              site chrome: header, mega-menu, footer, search overlay
 │   │   │   └── lib/                     defineAction(), auth-client, cart cookie, seo helpers, image loader
+│   │   ├── tests/smoke.test.ts       ✅ built app: headers, CSP, request ids, health 200/503, invalid env refused
 │   │   └── tests/e2e/                   Playwright: browse → cart → COD checkout, bank transfer, account
 │   │
-│   └── admin/                           admin.novyra.pk — Next.js 16
+│   └── admin/                        ✅ admin.novyra.pk — Next.js 16 (Phase 0: shell, placeholder page, health)
+│       ├── tests/smoke.test.ts       ✅ built app: nonce on every script, private headers, health, invalid env refused
 │       └── src/
-│           ├── proxy.ts                 request id · nonce CSP · auth redirect
+│           ├── proxy.ts              ✅ request id · per-request nonce CSP · no-store (later: auth redirect)
 │           ├── app/
 │           │   ├── (auth)/              sign-in, 2FA challenge, 2FA enrolment, accept-invite
 │           │   └── (dashboard)/
@@ -79,22 +84,27 @@ novyra/
 │   ├── db/                           ✅ @novyra/db
 │   │   ├── prisma.config.ts          ✅ datasource URLs (Prisma 7)
 │   │   ├── prisma.test.config.ts     ✅ same, pointed at TEST_DATABASE_URL (db:test:prepare)
-│   │   ├── load-env.ts               ✅ loads packages/db/.env, then novyra/.env
+│   │   ├── load-env.ts               ✅ loads packages/db/.env, then the root .env
 │   │   ├── prisma/
 │   │   │   ├── schema.prisma         ✅ 58 models, 34 enums
-│   │   │   └── migrations/           ✅ init + integrity_constraints
+│   │   │   └── migrations/           ✅ init · integrity_constraints · idempotency_lock_token
 │   │   ├── src/
-│   │   │   ├── client.ts                PrismaClient + @prisma/adapter-pg, singleton per process
-│   │   │   ├── transaction.ts           withTransaction(): timeout, retry on 40001/40P01
-│   │   │   ├── seed/                    permissions, roles, cities, zones, methods, settings
+│   │   │   ├── index.ts              ✅ public entry: generated client + helpers
+│   │   │   ├── client.ts             ✅ PrismaClient + @prisma/adapter-pg, singleton per process
+│   │   │   ├── transaction.ts        ✅ withTransaction(): timeout, retry on 40001/40P01 (statement or commit)
 │   │   │   └── generated/prisma/        (git-ignored) generated client
-│   │   └── tests/integrity.test.ts   ✅ DB invariants incl. concurrency
+│   │   ├── turbo.json                ✅ `generate` hashes only the Prisma schema and config
+│   │   └── tests/                    ✅ integrity.test.ts (DB invariants incl. concurrency) · transaction.test.ts (real deadlocks, SERIALIZABLE conflicts)
 │   │
-│   ├── core/                            @novyra/core — the backend (import "server-only")
+│   ├── core/                         ✅ @novyra/core — the backend
+│   │   ├── scripts/seed.ts           ✅ `pnpm db:seed`
 │   │   └── src/
-│   │       ├── shared/                  money.ts · errors.ts · result.ts · ids.ts · crypto.ts (AES-GCM, HMAC)
-│   │       │                            idempotency.ts · outbox.ts · rate-limit.ts · turnstile.ts · http.ts (allowlisted fetch)
-│   │       │                            logger.ts · request-context.ts · types.ts (Money, InboundHttpRequest)
+│   │       ├── shared/               ✅ money · errors · result · crypto (AES-GCM, HMAC) · idempotency · outbox
+│   │       │                            http (allowlisted fetch) · logger (redaction) · request-context · health
+│   │       │                            (later: rate-limit · turnstile · InboundHttpRequest type)
+│   │       ├── platform/             ✅ checkPlatformHealth(): the health entry point the apps call
+│   │       ├── settings/             ✅ Zod schema + default per setting key (decided values from 08)
+│   │       ├── seed/                 ✅ idempotent reference data: permissions, roles, cities, zone, methods, settings
 │   │       ├── catalog/                 index.ts (public API) · service.ts · queries.ts · dto.ts · sanitize.ts
 │   │       ├── cart/
 │   │       ├── checkout/                pricing.ts · place-order.ts
@@ -115,22 +125,25 @@ novyra/
 │   │       ├── notifications/           types.ts · service.ts · dispatcher.ts · rules.ts · templates/ · senders/{resend,smtp,whatsapp-cloud}/
 │   │       ├── media/                   types.ts · cloudinary/ · s3/
 │   │       ├── analytics/               ga4-measurement-protocol.ts · meta-capi.ts · reports.ts (SQL KPIs)
-│   │       ├── customers/ · reviews/ · wishlist/ · returns/ · refunds/ · coupons/ · newsletter/ · settings/ · audit/
+│   │       ├── customers/ · reviews/ · wishlist/ · returns/ · refunds/ · coupons/ · newsletter/ · audit/
 │   │       └── jobs/                    dispatcher.ts · handlers/ · scheduled/ (expire-reservations, reconcile-payments, sync-shipments, cleanup, …)
 │   │
-│   ├── auth/                            @novyra/auth (import "server-only")
+│   ├── auth/                         ✅ @novyra/auth (Phase 0: permissions only)
 │   │   └── src/
 │   │       ├── storefront.ts · admin.ts Better Auth instances
 │   │       ├── password.ts              Argon2id hash/verify
-│   │       ├── permissions.ts           permission catalogue (source of truth) + role templates
+│   │       ├── permissions.ts        ✅ permission catalogue (source of truth) + role templates
 │   │       └── guards.ts                requireUser · requireStaff · requirePermission · requireFreshSession
 │   │
 │   ├── validation/                      @novyra/validation: isomorphic Zod schemas (address, checkout, product, coupon, review, …)
-│   ├── env/                             @novyra/env: server.ts (server-only) · client.ts (NEXT_PUBLIC_ allowlist)
+│   ├── env/                          ✅ @novyra/env: schema.ts (Zod, no values) · server.ts (server-only, validated, cached)
+│   │                                    · client.ts (NEXT_PUBLIC_ allowlist) · bin/check-env (refuses dev/build/start)
 │   ├── ui/                              @novyra/ui: design tokens (Tailwind v4 @theme), primitives, motion presets
 │   ├── emails/                          @novyra/emails: React Email templates + preview server
 │   ├── analytics/                       @novyra/analytics: track(), consent store, GA4 + Meta Pixel destinations
-│   └── config/                          shared tsconfig, eslint (incl. import-boundary rules), prettier
+│   └── config/                       ✅ tsconfig presets · ESLint presets (incl. import boundaries) · next/security-headers
+│                                        · bin/with-root-env (runs a command with the root .env loaded)
+│                                        · testing/next-server (starts a built app for smoke tests)
 ```
 
 ## Dependency rules
@@ -143,7 +156,7 @@ novyra/
 | `ui`, `validation`, `analytics` | each other's public types only | anything server-only |
 | `core/<module>` | other modules' `index.ts` only | other modules' internals |
 
-Enforced by ESLint `no-restricted-imports` patterns plus `server-only`. CI fails on a violation.
+Enforced today by package `exports` maps (deep imports into another package's `src/` don't resolve), ESLint `no-restricted-imports` in the apps (no `@novyra/db`), and `server-only` on app-facing server entry points. Module-to-module rules inside `core` get an ESLint rule when the first domain modules land (Phase 2). CI fails on a violation.
 
 ## Naming conventions
 

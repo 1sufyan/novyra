@@ -4,10 +4,9 @@ Production architecture for NOVYRA's online store: a customer storefront, an ope
 backend for catalog, orders, inventory, payments, shipping, notifications and analytics, built for the Pakistani
 market first (COD, bank transfer, local gateways and couriers) and international later.
 
-> **Status: design agreed, implementation not started.** This folder holds the architecture and a working,
-> tested database package. **No UI has been built yet.** The key product decisions are recorded in
-> [docs/08-implementation-plan.md](docs/08-implementation-plan.md#decisions). Implementation starts with Phase 0,
-> beginning with the move to a dedicated `novyra` repository.
+> **Status: Phase 0 (foundations) complete in code; staging deploy waits on hosting accounts and domains.**
+> The monorepo, database, shared backend kernel, seed, CI and two empty Next.js apps exist and are tested.
+> **No UI has been built yet** (Phase 2). Decisions: [docs/08-implementation-plan.md](docs/08-implementation-plan.md#decisions).
 
 ## Documents
 
@@ -24,36 +23,49 @@ market first (COD, bank transfer, local gateways and couriers) and international
 | 08 | [Implementation plan](docs/08-implementation-plan.md) | Phases, exit criteria, testing strategy, **decisions** (agreed and still open), accounts to request |
 | 09 | [Environment](docs/09-environment.md) | Every env var: purpose, app, secret/public, when required |
 
-## What exists and is verified
+## Getting started
 
-| Item | Verification |
-|---|---|
-| `packages/db/prisma/schema.prisma`: 58 models, 34 enums | `prisma validate` ✓ · `prisma format` ✓ |
-| `migrations/…_init` + `migrations/…_integrity_constraints` | Applied to PostgreSQL 16 ✓ · `migrate diff` (DB ↔ schema and migrations ↔ schema): **no drift** ✓ · shadow-DB `migrate dev`: empty ✓ |
-| `packages/db/tests/integrity.test.ts` | **14/14 pass**, stable over repeated runs. Covers concurrent stock reservation (8 buyers, 3 units → exactly 3 succeed), concurrent coupon redemption, outbox claiming with `SKIP LOCKED`, total arithmetic, refund caps, append-only ledgers. A negative control without the constraints migration fails 12/14. |
-| Generated client + tests | `tsc --noEmit` with TypeScript 6.0.3 ✓ |
-| Integration contracts in docs 04–06 | Type-checked under `strict` + `exactOptionalPropertyTypes` ✓ |
-
-## Working with the database package
-
-Requires Node 24 LTS, pnpm 11 and a PostgreSQL ≥ 13 you can create databases on.
+Requires Node 24 LTS, pnpm 11 (`corepack enable` or `npm i -g pnpm@11`) and Docker.
 
 ```bash
-cd novyra
+git clone https://github.com/1sufyan/novyra && cd novyra
 pnpm install
-cp .env.example .env                      # set DIRECT_DATABASE_URL, SHADOW_DATABASE_URL, TEST_DATABASE_URL
+cp .env.example .env              # works as-is with docker compose
+docker compose up -d              # PostgreSQL 17 (+ shadow and test databases) and Mailpit
 
-pnpm db:validate                          # schema is valid
-pnpm db:migrate:deploy                    # apply migrations to DIRECT_DATABASE_URL
-pnpm db:generate                          # generate the Prisma client (git-ignored)
-pnpm db:typecheck
-
-# integrity tests run against a separate, disposable database:
-pnpm db:test:prepare                      # apply migrations to TEST_DATABASE_URL
-pnpm db:test
+pnpm db:migrate:deploy            # apply migrations
+pnpm db:seed                      # generates the Prisma client, then seeds permissions, roles, cities,
+                                  # methods and settings (idempotent)
+pnpm dev                          # storefront http://localhost:3000 · admin http://localhost:3001
 ```
 
-The db scripts read `novyra/.env` (and `packages/db/.env` if present). Variables already exported in the shell take precedence.
+Every command reads the repository-root `.env`, and variables exported in the shell take precedence. Under
+Turborepo's strict environment mode, `pnpm build` and the other turbo tasks see only the variables listed in
+`turbo.json`; `pnpm dev` runs in loose mode and sees everything ([docs/09](docs/09-environment.md)).
+
+| Command | What it does |
+|---|---|
+| `pnpm lint` · `pnpm typecheck` · `pnpm format:check` | Static checks across the monorepo (Turborepo) |
+| `pnpm test` | Unit tests (no database) |
+| `pnpm db:test:prepare && pnpm test:integration` | Migrates `TEST_DATABASE_URL`, then runs every database test |
+| `pnpm build` | Validates the environment, then builds both apps (generates the Prisma client first) |
+| `pnpm test:smoke` | Starts the built apps and checks headers, CSP nonces, request ids, health and env refusal |
+| `pnpm db:generate` | Regenerate the Prisma client (git-ignored) after editing `schema.prisma` |
+| `pnpm db:migrate:dev --name <change>` | Create a migration after editing `schema.prisma` |
+| `pnpm db:studio` | Browse the local database |
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all of the above on every push, against a real PostgreSQL,
+including a migration-drift check, seeding twice and the smoke tests.
+
+## What is tested
+
+| Area | Proof |
+|---|---|
+| Schema and migrations | `prisma validate`; no drift between migrations, schema and a migrated database; applies to an empty database in CI |
+| Database (`packages/db/tests`) | 14 integrity tests (8 buyers for 3 units → exactly 3 succeed; coupon limits; refund caps; append-only ledgers), 6 transaction tests (real deadlocks and SERIALIZABLE commit conflicts are retried until both sides commit) and a client test (a query to a database that went silent fails instead of hanging) |
+| Backend kernel (`packages/core`) | Unit: money arithmetic and allocation, AES-GCM field encryption (key rotation, full-length tags, canonical keys), HMAC, error exposure rules, SSRF-safe HTTP client (fetch-style redirects, no credentials across origins), log redaction (nested keys, messages and interpolation values). Integration: idempotency under concurrency, lock renewal while work runs, and takeover (a superseded attempt can't complete or release the key), outbox (concurrent workers never share an event, a slow run doesn't hold or duplicate events it hasn't started, abandoned events count as attempts and go DEAD when out of attempts), health (including a database that never answers), seed idempotency |
+| Environment | `check-env` refuses to build or start with invalid or missing variables, naming each problem without echoing values; those variables are part of the build's cache key, so a cached build can't skip the check (unit tests plus smoke tests) |
+| Apps (`pnpm test:smoke`) | Both apps: security headers and CSP on pages, API routes and 404s; an incoming request id is kept only if it is a well-formed UUID, otherwise replaced; `/api/health` is 200 when healthy and 503 when the database is unreachable. Admin: a fresh nonce on every script per request, `noindex`, `no-store`. Storefront: started without `check-env`, an invalid environment makes every request answer 500 instead of serving |
 
 ## Principles
 

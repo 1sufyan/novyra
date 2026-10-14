@@ -1,0 +1,66 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "stream",
+  "agentGuidance": false,
+  "globalDependencies": [".env"],
+  "globalPassThroughEnv": [
+    "APP_ENV",
+    "NODE_ENV",
+    "LOG_LEVEL",
+    "DATABASE_URL",
+    "DIRECT_DATABASE_URL",
+    "SHADOW_DATABASE_URL",
+    "TEST_DATABASE_URL",
+    "ADMIN_URL",
+    "DATA_ENCRYPTION_KEY",
+    "INTERNAL_API_SECRET",
+    "CRON_SECRET",
+    "CI"
+  ],
+  "tasks": {
+    "transit": {
+      "dependsOn": ["^transit"]
+    },
+    "generate": {
+      "dependsOn": ["^generate"],
+      "outputs": ["src/generated/**"]
+    },
+    "build": {
+      "dependsOn": ["transit", "generate"],
+      "env": [
+        "NEXT_PUBLIC_*",
+        "APP_ENV",
+        "LOG_LEVEL",
+        "DATABASE_URL",
+        "ADMIN_URL",
+        "DATA_ENCRYPTION_KEY",
+        "INTERNAL_API_SECRET",
+        "CRON_SECRET"
+      ],
+      "outputs": [".next/**", "!.next/cache/**", "!.next/dev/**"]
+    },
+    "dev": {
+      "dependsOn": ["transit", "generate"],
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "dependsOn": ["transit", "generate"]
+    },
+    "typecheck": {
+      "dependsOn": ["transit", "generate"]
+    },
+    "test": {
+      "dependsOn": ["transit", "generate"]
+    },
+    "test:integration": {
+      "dependsOn": ["transit", "generate"],
+      "cache": false
+    },
+    "test:smoke": {
+      "dependsOn": ["build"],
+      "env": ["NEXT_PUBLIC_*"],
+      "cache": false
+    }
+  }
+}
