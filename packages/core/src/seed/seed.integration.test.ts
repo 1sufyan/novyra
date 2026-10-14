@@ -43,30 +43,29 @@ describe("seedReferenceData", () => {
 
   test("never overwrites what the owner changed in admin", async () => {
     await seedReferenceData(prisma);
-    await prisma.paymentMethod.update({
-      where: { providerCode: "cod" },
-      data: { displayName: "Pay on delivery" },
-    });
-    await setSetting(prisma, "cod", { ...defaultSettings.cod, maxOrderTotalWithoutAdvance: "75000.00" });
+    const cod = await prisma.paymentMethod.findUniqueOrThrow({ where: { providerCode: "cod" } });
+    const lahore = { countryCode_name: { countryCode: "PK", name: "Lahore" } };
+    const originalZoneId = (await prisma.city.findUniqueOrThrow({ where: lahore })).zoneId;
     const lahoreZone = await prisma.shippingZone.create({ data: { name: "Lahore", countryCode: "PK" } });
-    await prisma.city.update({
-      where: { countryCode_name: { countryCode: "PK", name: "Lahore" } },
-      data: { zoneId: lahoreZone.id },
-    });
+    try {
+      await prisma.paymentMethod.update({ where: { id: cod.id }, data: { displayName: "Pay on delivery" } });
+      await setSetting(prisma, "cod", { ...defaultSettings.cod, maxOrderTotalWithoutAdvance: "75000.00" });
+      await prisma.city.update({ where: lahore, data: { zoneId: lahoreZone.id } });
 
-    await seedReferenceData(prisma);
+      await seedReferenceData(prisma);
 
-    expect(
-      (await prisma.paymentMethod.findUniqueOrThrow({ where: { providerCode: "cod" } })).displayName,
-    ).toBe("Pay on delivery");
-    expect((await getSetting(prisma, "cod")).maxOrderTotalWithoutAdvance).toBe("75000.00");
-    expect(
-      (
-        await prisma.city.findUniqueOrThrow({
-          where: { countryCode_name: { countryCode: "PK", name: "Lahore" } },
-        })
-      ).zoneId,
-    ).toBe(lahoreZone.id);
+      expect((await prisma.paymentMethod.findUniqueOrThrow({ where: { id: cod.id } })).displayName).toBe(
+        "Pay on delivery",
+      );
+      expect((await getSetting(prisma, "cod")).maxOrderTotalWithoutAdvance).toBe("75000.00");
+      expect((await prisma.city.findUniqueOrThrow({ where: lahore })).zoneId).toBe(lahoreZone.id);
+    } finally {
+      // Put the owner's edits back, so the suite can run again on the same database.
+      await prisma.paymentMethod.update({ where: { id: cod.id }, data: { displayName: cod.displayName } });
+      await setSetting(prisma, "cod", defaultSettings.cod);
+      await prisma.city.update({ where: lahore, data: { zoneId: originalZoneId } });
+      await prisma.shippingZone.delete({ where: { id: lahoreZone.id } });
+    }
   });
 
   test("restores a system role's permissions if they were tampered with", async () => {

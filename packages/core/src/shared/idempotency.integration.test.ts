@@ -160,6 +160,24 @@ describe("idempotency", () => {
     expect(runs).toBe(1);
   });
 
+  test("a long-running attempt keeps its key: a retry can't take it over while the work runs", async () => {
+    const input = request({ lockMs: 100 });
+    let runs = 0;
+    const first = runIdempotent(prisma, input, async () => {
+      runs++;
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return { response: "first" };
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await expect(beginIdempotentRequest(prisma, input)).rejects.toMatchObject({ reason: "in_progress" });
+    expect(await first).toEqual({ replayed: false, response: "first" });
+    expect(await runIdempotent(prisma, input, async () => ({ response: "again" }))).toEqual({
+      replayed: true,
+      response: "first",
+    });
+    expect(runs).toBe(1);
+  });
+
   test("completion can be written inside the caller's transaction", async () => {
     const input = request();
     const begun = await beginIdempotentRequest(prisma, input);

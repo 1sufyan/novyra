@@ -3,7 +3,8 @@
  * Each integration gets a client that can reach only its own hosts, over HTTPS, with a timeout.
  * Redirects are returned to the caller unless the integration opts in; followed redirects stay
  * within the allowlist and behave like fetch(): a 303 (or a 301/302 after a POST) becomes a
- * body-less GET, and credentials are dropped when the origin changes.
+ * body-less GET. Stricter than fetch(), a redirect to another origin keeps only harmless headers
+ * (so no Authorization, cookie or API-key header follows it) and never re-sends a request body.
  */
 
 export class HttpRequestBlockedError extends Error {
@@ -35,8 +36,8 @@ const BODY_HEADERS = [
   "content-language",
   "content-location",
 ];
-/** Never sent to an origin other than the one the caller addressed. */
-const CREDENTIAL_HEADERS = ["authorization", "cookie", "proxy-authorization"];
+/** The only headers that follow a redirect to another origin; any other header may carry a credential. */
+const CROSS_ORIGIN_HEADERS = new Set(["accept", "accept-language", "user-agent"]);
 
 export function createHttpClient(options: HttpClientOptions): HttpFetch {
   const { name, timeoutMs = 10_000, allowInsecureLocalhost = false, maxRedirects = 0 } = options;
@@ -83,7 +84,12 @@ export function createHttpClient(options: HttpClientOptions): HttpFetch {
         throw new HttpRequestBlockedError(`${name}: a streamed request body cannot be sent again`);
       }
       if (next.origin !== url.origin) {
-        for (const header of CREDENTIAL_HEADERS) headers.delete(header);
+        if (body !== undefined && body !== null) {
+          throw new HttpRequestBlockedError(`${name}: a request body is never sent on to another origin`);
+        }
+        for (const header of [...headers.keys()]) {
+          if (!CROSS_ORIGIN_HEADERS.has(header)) headers.delete(header);
+        }
       }
       url = next;
     }

@@ -6,10 +6,16 @@ export interface CreatePrismaClientOptions {
   /** Maximum pooled connections for this process (default 10). Keep it low behind a pooler. */
   maxConnections?: number;
   /**
-   * Give up opening a connection after this long (default 5 s). node-postgres otherwise waits
-   * forever, so an unresponsive database or pooler would hang every request instead of failing.
+   * Give up opening a connection, or waiting for a free one, after this long (default 5 s).
+   * node-postgres otherwise waits forever.
    */
   connectionTimeoutMs?: number;
+  /**
+   * Fail a query that gets no answer within this long (default 30 s), for example on a pooled
+   * connection that went silent during a failover. Interactive transactions also have their own,
+   * shorter timeout (withTransaction).
+   */
+  queryTimeoutMs?: number;
 }
 
 /** Creates a client over node-postgres. Prefer `getPrisma()` in application code. */
@@ -19,6 +25,10 @@ export function createPrismaClient(connectionString: string, options: CreatePris
       connectionString,
       max: options.maxConnections ?? 10,
       connectionTimeoutMillis: options.connectionTimeoutMs ?? 5_000,
+      query_timeout: options.queryTimeoutMs ?? 30_000,
+      // TCP keep-alive lets the OS notice a peer that vanished without closing the connection.
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10_000,
       idleTimeoutMillis: 30_000,
     }),
   });

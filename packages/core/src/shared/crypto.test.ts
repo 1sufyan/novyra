@@ -99,6 +99,10 @@ describe("field cipher (AES-256-GCM)", () => {
     expect(() => createFieldCipher({ v1: "changeme changeme changeme changeme changeme123" }, "v1")).toThrow(
       /32 random bytes/,
     );
+    // Canonical base64, but not random: all zero bytes.
+    expect(() => createFieldCipher({ v1: Buffer.alloc(32).toString("base64") }, "v1")).toThrow(
+      /32 random bytes/,
+    );
     expect(() => createFieldCipher({ key1: key() }, "key1")).toThrow(/Invalid key version/);
     expect(() => createFieldCipher({ v1: key() }, "v2")).toThrow(/No key/);
   });

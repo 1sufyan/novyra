@@ -14,6 +14,8 @@ interface Seen {
   url: string;
   host: string;
   authorization?: string;
+  apiKey?: string;
+  accept?: string;
   contentType?: string;
   body: string;
 }
@@ -28,6 +30,8 @@ beforeAll(async () => {
       url: req.url ?? "",
       host: req.headers.host ?? "",
       authorization: req.headers.authorization,
+      apiKey: req.headers["x-api-key"] as string | undefined,
+      accept: req.headers.accept,
       contentType: req.headers["content-type"],
       body,
     });
@@ -38,6 +42,10 @@ beforeAll(async () => {
     }
     if (req.url === "/pay-elsewhere") {
       res.writeHead(303, { location: `http://localhost:${port}/status/1` });
+      return res.end();
+    }
+    if (req.url === "/pay-temporary-elsewhere") {
+      res.writeHead(307, { location: `http://localhost:${port}/pay-here` });
       return res.end();
     }
     if (req.url === "/pay-temporary") {
@@ -116,14 +124,21 @@ describe("createHttpClient", () => {
     expect(seen[1]!.authorization).toBe("Bearer SECRET");
   });
 
-  test("credentials are not sent to another origin", async () => {
+  test("credentials and bodies are not sent on to another origin", async () => {
+    const both = client({ allowedHosts: ["127.0.0.1", "localhost"], maxRedirects: 3 });
     seen.length = 0;
-    await client({ allowedHosts: ["127.0.0.1", "localhost"], maxRedirects: 3 })(
-      `${base}/pay-elsewhere`,
-      payment,
-    );
+    await both(`${base}/pay-elsewhere`, {
+      ...payment,
+      headers: { ...payment.headers, "x-api-key": "APIKEY", accept: "application/json" },
+    });
     expect(seen[1]).toMatchObject({ host: `localhost:${port}`, method: "GET" });
     expect(seen[1]!.authorization).toBeUndefined();
+    expect(seen[1]!.apiKey).toBeUndefined();
+    expect(seen[1]!.accept).toBe("application/json");
+
+    seen.length = 0;
+    await expect(both(`${base}/pay-temporary-elsewhere`, payment)).rejects.toThrow(/another origin/);
+    expect(seen).toHaveLength(1);
   });
 
   test("a 307 repeats the method and body, but never a stream", async () => {

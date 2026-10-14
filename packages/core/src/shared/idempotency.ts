@@ -13,11 +13,11 @@ import { AppError } from "./errors.ts";
  *   if (begun.kind === "replay") return begun.response;
  *   … do the work; in the same transaction, call completeIdempotentRequest(tx, begun.record, …)
  *
- * A key is held for `lockMs`. If the attempt is still running when that lapses, a retry may take the
- * key over; the earlier attempt then holds a stale token, so its completeIdempotentRequest throws
- * (rolling its transaction back) and its failIdempotentRequest is a no-op. Choose `lockMs` longer
- * than the command's worst case, and pass the key on to providers that accept one, because side
- * effects outside the database cannot be rolled back.
+ * A key is held for `lockMs`; holdIdempotencyKey() (used by runIdempotent) renews the lock while the
+ * work runs, so in practice it lapses only when the process dies. A retry may then take the key
+ * over, and the earlier attempt holds a stale token: its completeIdempotentRequest throws (rolling
+ * its transaction back) and its failIdempotentRequest is a no-op. Side effects outside the database
+ * cannot be rolled back, so commands pass the key on to providers that accept one.
  */
 
 export type IdempotencyConflictReason =
@@ -64,6 +64,8 @@ export interface IdempotencyRecord {
   readonly key: string;
   /** Proves this attempt still holds the key. */
   readonly lockToken: string;
+  /** How long one renewal of the lock lasts. */
+  readonly lockMs: number;
 }
 
 export type BeginResult =
@@ -91,7 +93,7 @@ export async function beginIdempotentRequest(
     const created = await prisma.idempotencyKey.create({
       data: { scope, key, subject, requestHash, status: "IN_PROGRESS", lockedUntil, lockToken, expiresAt },
     });
-    return { kind: "proceed", record: { id: created.id, scope, key, lockToken } };
+    return { kind: "proceed", record: { id: created.id, scope, key, lockToken, lockMs } };
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
   }
@@ -129,7 +131,7 @@ export async function beginIdempotentRequest(
     },
   });
   if (taken.count === 0) throw new IdempotencyConflictError("in_progress");
-  return { kind: "proceed", record: { id: existing.id, scope, key, lockToken } };
+  return { kind: "proceed", record: { id: existing.id, scope, key, lockToken, lockMs } };
 }
 
 /** Matches the row only while `record`'s attempt still holds it. */
@@ -142,6 +144,24 @@ export interface CompletedResponse {
   status?: number;
   resourceType?: string;
   resourceId?: string;
+}
+
+/**
+ * Renews the key's lock every lockMs / 3 until stop() is called, so a retry cannot take the key over
+ * while this process is still working on it. A renewal never revives a key another attempt holds.
+ */
+export function holdIdempotencyKey(prisma: PrismaClient, record: IdempotencyRecord): { stop(): void } {
+  const timer = setInterval(
+    () => {
+      prisma.idempotencyKey
+        .updateMany({ where: heldBy(record), data: { lockedUntil: new Date(Date.now() + record.lockMs) } })
+        // A missed renewal only shortens the lock; the next one may succeed.
+        .catch(() => undefined);
+    },
+    Math.max(Math.floor(record.lockMs / 3), 10),
+  );
+  timer.unref();
+  return { stop: () => clearInterval(timer) };
 }
 
 /**
@@ -195,15 +215,22 @@ export async function runIdempotent<T extends Prisma.InputJsonValue>(
 ): Promise<{ replayed: boolean; response: T | Prisma.JsonValue }> {
   const begun = await beginIdempotentRequest(prisma, input);
   if (begun.kind === "replay") return { replayed: true, response: begun.response };
+  const hold = holdIdempotencyKey(prisma, begun.record);
   let result: Awaited<ReturnType<typeof handler>>;
   try {
     result = await handler();
   } catch (error) {
+    hold.stop();
     await failIdempotentRequest(prisma, begun.record);
     throw error;
   }
-  // The handler succeeded, so the key is never released from here: if storing the response fails,
-  // it stays IN_PROGRESS until its lock lapses rather than letting a retry run the handler again.
-  await completeIdempotentRequest(prisma, begun.record, result);
+  // The handler succeeded, so the key is not released from here. If storing the response fails, the
+  // key stays IN_PROGRESS: retries get 409 until the lock lapses (lockMs), and only then may one run
+  // the handler again. Commands therefore also pass the key to providers that accept one.
+  try {
+    await completeIdempotentRequest(prisma, begun.record, result);
+  } finally {
+    hold.stop();
+  }
   return { replayed: false, response: result.response };
 }

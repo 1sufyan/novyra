@@ -4,10 +4,11 @@
  */
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { startApp, type StartedApp } from "@novyra/config/testing/next-server";
 
-const cwd = new URL("..", import.meta.url).pathname;
+const cwd = fileURLToPath(new URL("..", import.meta.url));
 const local = {
   APP_ENV: "test",
   NEXT_PUBLIC_SITE_URL: "http://localhost:3000",

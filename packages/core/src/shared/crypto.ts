@@ -67,12 +67,16 @@ const TAG_BYTES = 16;
 const VERSION_PATTERN = /^v\d+$/;
 
 /**
- * Decodes a key given as canonical base64 of exactly 32 bytes. Node's decoder skips invalid
- * characters, so a passphrase can decode to 32 bytes; requiring the canonical form rejects it.
+ * Decodes a key given as canonical base64 of exactly 32 bytes, with the byte variety of random data.
+ * Node's decoder skips invalid characters, so free text can decode to 32 bytes; the round trip
+ * rejects it, and the variety check rejects placeholders such as "AAAA…". Same rule as the env
+ * schema. A passphrase typed in the base64 alphabet can't be told apart: generate keys with
+ * `openssl rand -base64 32`.
  */
 export function decodeEncryptionKey(encoded: string): Buffer | undefined {
   const key = Buffer.from(encoded, "base64");
-  return key.length === 32 && key.toString("base64") === encoded ? key : undefined;
+  const canonical = key.length === 32 && key.toString("base64") === encoded;
+  return canonical && new Set(key).size >= 16 ? key : undefined;
 }
 
 export class DecryptionError extends Error {

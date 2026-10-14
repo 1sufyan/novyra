@@ -94,11 +94,62 @@ describe("logger", () => {
     expect(lines[1]).toMatchObject({ msg: "no user [redacted]" });
   });
 
-  test("redacts child logger bindings", () => {
+  test("redacts child logger bindings, including later setBindings", () => {
     const { lines, logger } = capture();
-    logger.child({ email: "ayesha@example.com", orderId: "o-1" }).info("placed");
+    const child = logger.child({ email: "ayesha@example.com", orderId: "o-1" });
+    child.info("placed");
     expectClean(lines[0]);
     expect(lines[0]).toMatchObject({ orderId: "o-1" });
+    child.child({ step: "pay" }).setBindings({ phone: "+923001234567" });
+    child.setBindings({ customer: { email: "b@example.com" } });
+    child.info("again");
+    expectClean(lines[1]);
+  });
+
+  test("scrubs printf-style interpolation values", () => {
+    const { lines, logger } = capture();
+    logger.info({}, "payload %j", { email: "b@example.com", token: "LEAK3", city: "Karachi" });
+    logger.info("card %d declined for %s", 4111111111111111, "ayesha@example.com");
+    logger.info("object %o", { password: "hunter2" });
+    for (const line of lines) expectClean(line);
+    expect(JSON.stringify(lines[0])).toContain("Karachi");
+  });
+
+  test("redacts short sensitive words inside longer keys, and card numbers held as numbers", () => {
+    const sensitive = [
+      "otpCode",
+      "otp_code",
+      "cardCvv",
+      "cvv2",
+      "card_cvc",
+      "walletPin",
+      "mpin",
+      "mobile",
+      "msisdn",
+      "whatsappNumber",
+      "contactNumber",
+      "bankAccountNumber",
+      "customerCnic",
+    ];
+    for (const key of sensitive) expect(isSensitiveKey(key), key).toBe(true);
+    for (const key of ["orderId", "spinner", "pinned", "panel", "company", "status", "optional"]) {
+      expect(isSensitiveKey(key), key).toBe(false);
+    }
+    const { lines, logger } = capture();
+    logger.info({ payment: { card: 4111111111111111, amount: 125000 } }, "charged");
+    expectClean(lines[0]);
+    expect(lines[0]).toMatchObject({ payment: { amount: 125000 } });
+  });
+
+  test("never throws on hostile values", () => {
+    const { lines, logger } = capture();
+    const hostile = {
+      toJSON() {
+        throw new Error("boom");
+      },
+    };
+    logger.info({ hostile }, "still logged");
+    expect(lines[0]).toMatchObject({ hostile: "[unserializable]", msg: "still logged" });
   });
 
   test("leaves ordinary numbers and identifiers alone, and survives cycles", () => {

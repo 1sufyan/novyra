@@ -5,10 +5,11 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { startApp, type StartedApp } from "@novyra/config/testing/next-server";
 
-const cwd = new URL("..", import.meta.url).pathname;
+const cwd = fileURLToPath(new URL("..", import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const local = {
   APP_ENV: "test",
