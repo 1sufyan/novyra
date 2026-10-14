@@ -37,7 +37,7 @@
         "INTERNAL_API_SECRET",
         "CRON_SECRET"
       ],
-      "outputs": [".next/**", "!.next/cache/**"]
+      "outputs": [".next/**", "!.next/cache/**", "!.next/dev/**"]
     },
     "dev": {
       "dependsOn": ["transit", "generate"],

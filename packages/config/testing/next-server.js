@@ -15,6 +15,16 @@ export async function freePort() {
 }
 
 /**
+ * The command that runs pnpm with `args`: through Node when pnpm is a JS file (corepack, npm),
+ * directly when it is the standalone executable (get.pnpm.io, mise).
+ */
+function pnpmCommand(args) {
+  const pnpm = process.env.npm_execpath;
+  if (!pnpm) return ["pnpm", args];
+  return /\.[cm]?js$/.test(pnpm) ? [process.execPath, [pnpm, ...args]] : [pnpm, args];
+}
+
+/**
  * Runs the app in `cwd` with `env` merged over the current environment: through its `start` script
  * (check-env, then next start), or with `checkEnv: false` through `next start` alone, to exercise
  * the runtime re-check. Resolves once the server answers /api/health, or once the process exits
@@ -22,17 +32,15 @@ export async function freePort() {
  */
 export async function startApp({ cwd, env = {}, checkEnv = true, timeoutMs = 30_000 }) {
   const port = String(await freePort());
-  const pnpm = process.env.npm_execpath;
-  const pnpmArgs = checkEnv
-    ? ["start", "--port", port]
-    : ["exec", "with-root-env", "next", "start", "--port", port];
-  const [command, args] = pnpm ? [process.execPath, [pnpm, ...pnpmArgs]] : ["pnpm", pnpmArgs];
+  const [command, args] = pnpmCommand(
+    checkEnv ? ["start", "--port", port] : ["exec", "with-root-env", "next", "start", "--port", port],
+  );
+  // Not detached: pnpm stays in the test's process group, so an interrupted run (Ctrl-C) takes it
+  // down too, and pnpm in turn ends the script it started.
   const child = spawn(command, args, {
     cwd,
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
-    // Own process group, so stop() also ends the next-server process the script starts.
-    detached: true,
   });
   let output = "";
   child.stdout.on("data", (chunk) => (output += chunk));
@@ -48,7 +56,7 @@ export async function startApp({ cwd, env = {}, checkEnv = true, timeoutMs = 30_
     async stop() {
       if (app.exitCode !== undefined) return;
       try {
-        process.kill(-child.pid, "SIGTERM");
+        child.kill("SIGTERM");
       } catch {
         // Already gone.
       }
@@ -80,20 +88,18 @@ function exitCodeOf(child) {
 
 /** Runs a package script (e.g. "build") in `cwd` to completion; kills it after `timeoutMs`. */
 export async function runScript({ cwd, script, env = {}, timeoutMs = 60_000 }) {
-  const pnpm = process.env.npm_execpath;
-  const [command, args] = pnpm ? [process.execPath, [pnpm, "run", script]] : ["pnpm", ["run", script]];
+  const [command, args] = pnpmCommand(["run", script]);
   const child = spawn(command, args, {
     cwd,
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
-    detached: true,
   });
   let output = "";
   child.stdout.on("data", (chunk) => (output += chunk));
   child.stderr.on("data", (chunk) => (output += chunk));
   const timer = setTimeout(() => {
     try {
-      process.kill(-child.pid, "SIGKILL");
+      child.kill("SIGKILL");
     } catch {
       // Already gone.
     }
