@@ -18,6 +18,14 @@ export function startApp(options: {
   timeoutMs?: number;
 }): Promise<StartedApp>;
 
+/** Runs a package script to completion; it is killed (exit code 137) after `timeoutMs`. */
+export function runScript(options: {
+  cwd: string;
+  script: string;
+  env?: Record<string, string | undefined>;
+  timeoutMs?: number;
+}): Promise<{ exitCode: number; output: string }>;
+
 export function assertSecurityHeaders(
   response: Response,
   options: { coop: "same-origin" | "same-origin-allow-popups" },

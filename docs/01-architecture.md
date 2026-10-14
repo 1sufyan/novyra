@@ -125,6 +125,8 @@ flowchart TB
 - **Region:** co-locate the functions and the database. Mumbai (`ap-south-1`) and the Gulf regions are the lowest-latency major-cloud regions for Pakistan. Pick one your Postgres provider supports, and put the functions in the same region.
 - **Connections:** the app connects through the provider's pooler (`DATABASE_URL`). Migrations use a direct connection (`DIRECT_DATABASE_URL`). Because the pooler runs in transaction mode, the code uses only transaction-scoped features (`pg_advisory_xact_lock`, `SELECT … FOR UPDATE`), never session-level advisory locks or `SET` without `LOCAL`.
 - **Environments:** `development` (Docker Compose: Postgres + Mailpit), `staging` (separate DB, provider **sandbox** credentials, `noindex`), `production`. Each environment has its own secrets. Production secrets are never on developer machines.
+- **Builds:** each Vercel project runs `turbo run build --filter=@novyra/<app>`. That generates the Prisma client first (so `DIRECT_DATABASE_URL` must be set at build time) and then runs the app's `build` script, whose `check-env` step fails the deployment when the environment is invalid. A build command that calls `next build` directly would skip both.
+- **Database timeouts:** opening a pooled connection times out after 5 s and a query with no answer after 30 s (`createPrismaClient`), so a database that goes silent during a failover fails requests instead of hanging them.
 - **Self-hosting option:** both apps also build as `output: "standalone"` Docker images. The cron routes then get hit by a small scheduler container or a system cron. Multi-instance self-hosting needs a shared Next.js cache handler (Redis) for tag revalidation.
 
 ## 4. Request handling
@@ -253,8 +255,8 @@ flowchart LR
 
 ## 7. Observability and operations
 
-- **Request IDs:** `proxy.ts` assigns `x-request-id`. It flows into logs, audit logs, Sentry and outbound provider calls.
-- **Structured logs** (pino, `createLogger`). Every logged object is scrubbed at any depth: values under keys naming passwords, tokens, secrets, API keys, authorization, cookies, emails, phones, IBANs, card numbers, CVVs, OTPs or PINs are replaced (case and separators ignored), and emails and card numbers inside strings are masked (docs/03 §14).
+- **Request IDs:** `proxy.ts` keeps an incoming `x-request-id` only when it is a well-formed UUID and otherwise assigns a fresh one, so clients can't put arbitrary text into logs (a client can still choose its UUID). It flows into logs, audit logs, Sentry and outbound provider calls.
+- **Structured logs** (pino, `createLogger`). Every logged object is scrubbed at any depth: values under keys naming passwords, tokens, secrets, API keys, authorization, cookies, emails, phones, IBANs, card numbers, CVVs, OTPs or PINs are replaced (case and separators ignored), and emails and card numbers inside strings and messages are masked (docs/03 §14).
 - **Sentry** for errors and performance in both apps. PII scrubbing on, source maps uploaded from CI only.
 - **Health:** `GET /api/health` checks DB connectivity and outbox backlog. External uptime monitoring alerts on failure.
 - **Business alerts:** outbox `DEAD` events, payments stuck in `REQUIRES_ACTION`, unverified bank transfers older than 24h, shipments with no tracking update for 72h, low stock, refund failures.

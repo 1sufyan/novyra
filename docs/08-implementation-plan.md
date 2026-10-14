@@ -51,7 +51,7 @@ Remaining (needs accounts, not code):
 - `packages/auth`: storefront and admin Better Auth instances, Argon2id, breached-password check, email verification, password reset, session management, TOTP 2FA (mandatory for staff), staff invitations.
 - Permission catalogue + guards (`requireUser`, `requirePermission`, `requireFreshSession`). `defineAction()` pipeline (validate → auth → authorise → rate limit → idempotency → audit).
 - Upstash rate limiting, Turnstile, audit log service, Resend sender + auth email templates.
-- Secret scanning before the first real credential exists: a gitleaks job in CI (plus a `pull_request` trigger) and GitHub push protection.
+- Secret scanning before the first real credential exists: a gitleaks job in CI (plus a `pull_request` trigger) and GitHub push protection. A `pnpm audit --audit-level high` step joins CI at the same time.
 - **Tests:** authorisation matrix (every permission × every role), auth flows, rate-limit behaviour, CSRF origin checks, and a Better Auth ↔ schema test (sign-up with `generateId: "uuid"` writes UUIDv7 IDs).
 
 **Exit:** a staff member can be invited, enrol 2FA and sign in to admin. A customer can sign up, verify and reset. Every denial is audited.
@@ -134,8 +134,8 @@ Remaining (needs accounts, not code):
 | Level | Scope | Tooling | Runs |
 |---|---|---|---|
 | Unit | Money, pricing, coupon rules, state machines, status mappings, signature helpers | Vitest | every PR |
-| Database integrity | CHECKs, partial indexes, triggers, concurrency patterns | `node:test` + real Postgres | every PR ✅ |
-| App smoke | built apps: security headers, CSP nonces, request ids, health 200/503, refusal of an invalid environment | `node:test` + `next start` | every PR ✅ |
+| Database integrity | CHECKs, partial indexes, triggers, concurrency patterns | `node:test` + real Postgres | every push ✅ (PRs from forks once Phase 1 adds the `pull_request` trigger) |
+| App smoke | built apps: security headers, CSP nonces, request ids, health 200/503, refusal of an invalid environment at build and start | `node:test` + `next start` | every push ✅ |
 | Service integration | core services against a real DB (place order, cancel, refund, apply webhook twice) | Vitest + Postgres service container | every PR |
 | Provider contract | each payment/shipping adapter against recorded sandbox fixtures + shared contract suite | Vitest | every PR |
 | Authorisation matrix | every admin action × every role → allowed/denied as specified in 03 §4 | Vitest | every PR |

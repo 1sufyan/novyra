@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   assertRequestIds,
   assertSecurityHeaders,
+  runScript,
   startApp,
   type StartedApp,
 } from "@novyra/config/testing/next-server";
@@ -64,12 +65,26 @@ describe("storefront without its database", () => {
 });
 
 describe("storefront with an invalid environment", () => {
+  const invalid = { ...local, APP_ENV: "production" };
+
   test("refuses to start and names the problems", async () => {
-    const app = await startApp({ cwd, env: { ...local, APP_ENV: "production" } });
-    await app.stop();
-    assert.equal(app.exitCode, 1, app.output);
+    const app = await startApp({ cwd, env: invalid });
+    try {
+      // startApp returns when the process exits or the server answers: a refused start exits.
+      assert.equal(app.exitCode, 1, `the server started instead of being refused:\n${app.output}`);
+    } finally {
+      await app.stop();
+    }
     assert.match(app.output, /Invalid environment configuration/);
     assert.match(app.output, /must use https:\/\/ when APP_ENV=production/);
+    assert.doesNotMatch(app.output, /Ready in/);
+  });
+
+  test("refuses to build", async () => {
+    const result = await runScript({ cwd, script: "build", env: invalid, timeoutMs: 20_000 });
+    assert.equal(result.exitCode, 1, result.output);
+    assert.match(result.output, /Invalid environment configuration/);
+    assert.doesNotMatch(result.output, /Creating an optimized production build/);
   });
 
   test("started without check-env, the runtime re-check answers 500 instead of serving", async () => {

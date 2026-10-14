@@ -45,6 +45,13 @@ async function seedInTransaction(tx: Tx): Promise<SeedSummary> {
     (await tx.permission.findMany({ select: { id: true, key: true } })).map((p) => [p.key, p.id]),
   );
   for (const template of ROLE_TEMPLATES) {
+    // System role keys are reserved: never take over a custom role that happens to use one.
+    const existing = await tx.role.findUnique({ where: { key: template.key }, select: { isSystem: true } });
+    if (existing && !existing.isSystem) {
+      throw new Error(
+        `Role key "${template.key}" belongs to a custom role. Rename that role; system role keys are reserved.`,
+      );
+    }
     const role = await tx.role.upsert({
       where: { key: template.key },
       create: { key: template.key, name: template.name, description: template.description, isSystem: true },

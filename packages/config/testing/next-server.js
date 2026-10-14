@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
+import { constants } from "node:os";
 
 /** A port that was free a moment ago. */
 export async function freePort() {
@@ -36,7 +37,7 @@ export async function startApp({ cwd, env = {}, checkEnv = true, timeoutMs = 30_
   let output = "";
   child.stdout.on("data", (chunk) => (output += chunk));
   child.stderr.on("data", (chunk) => (output += chunk));
-  const exited = new Promise((resolve) => child.once("exit", (code) => resolve(code ?? 1)));
+  const exited = exitCodeOf(child);
 
   const app = {
     url: `http://127.0.0.1:${port}`,
@@ -68,6 +69,38 @@ export async function startApp({ cwd, env = {}, checkEnv = true, timeoutMs = 30_
   }
   await app.stop();
   throw new Error(`App in ${cwd} did not start within ${timeoutMs} ms:\n${output}`);
+}
+
+/** Resolves with the exit code, or 128 + n when the process was killed by signal n (as a shell reports it). */
+function exitCodeOf(child) {
+  return new Promise((resolve) =>
+    child.once("exit", (code, signal) => resolve(code ?? 128 + (constants.signals[signal] ?? 0))),
+  );
+}
+
+/** Runs a package script (e.g. "build") in `cwd` to completion; kills it after `timeoutMs`. */
+export async function runScript({ cwd, script, env = {}, timeoutMs = 60_000 }) {
+  const pnpm = process.env.npm_execpath;
+  const [command, args] = pnpm ? [process.execPath, [pnpm, "run", script]] : ["pnpm", ["run", script]];
+  const child = spawn(command, args, {
+    cwd,
+    env: { ...process.env, ...env },
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+  });
+  let output = "";
+  child.stdout.on("data", (chunk) => (output += chunk));
+  child.stderr.on("data", (chunk) => (output += chunk));
+  const timer = setTimeout(() => {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      // Already gone.
+    }
+  }, timeoutMs);
+  const exitCode = await exitCodeOf(child);
+  clearTimeout(timer);
+  return { exitCode, output };
 }
 
 /** The headers both apps send on every response (docs/03-security.md §12). */

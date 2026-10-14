@@ -97,7 +97,7 @@ never touches, and the role editor refuses to edit system roles. Built-in role t
 | `audit:read` | ✓ | | ✓ | | | |
 
 Guard rails: staff can't change their own roles, the last `owner` can't be removed, refunds above
-`settings.refund_approval_threshold` need a second person with `refunds:approve`, and every permission change is audited.
+the `refunds.approvalThreshold` setting need a second person with `refunds:approve`, and every permission change is audited.
 
 ## 5. Input validation
 
@@ -159,7 +159,7 @@ and a phone blocklist plus RTO-history flag that drops risky orders into `ON_HOL
 - **Email / HTTP headers:** messages are sent through provider APIs with structured fields. CR/LF are stripped from any user value used in a subject or header.
 - **Path traversal:** storage keys are generated on the server (`products/<uuid>.<ext>`). User filenames are kept only as metadata.
 - **Log injection:** JSON-structured logs, never string concatenation.
-- **SSRF:** the server never fetches user-supplied URLs. Outbound HTTP goes through one `fetch` wrapper (`createHttpClient`) with a per-integration host allowlist, https only and timeouts. Redirects are returned to the caller unless the integration opts in; followed redirects stay inside the allowlist and behave like `fetch()`: a 303 (or a 301/302 after a POST) becomes a body-less GET, credentials are dropped when the origin changes, and a streamed body is never re-sent.
+- **SSRF:** the server never fetches user-supplied URLs. Outbound HTTP goes through one `fetch` wrapper (`createHttpClient`) with a per-integration host allowlist, https only and timeouts. Redirects are returned to the caller unless the integration opts in; followed redirects stay inside the allowlist and behave like `fetch()`: a 303 (or a 301/302 after a POST) becomes a body-less GET. Stricter than `fetch()`, a redirect to another origin keeps only `accept`, `accept-language` and `user-agent` (no `Authorization`, cookie or API-key header follows it), a request body is never sent on to another origin, and a streamed body is never re-sent.
 - **Open redirect:** `callbackURL` / `returnTo` must be relative paths starting with a single `/`.
 
 ## 10. Secure API endpoints
@@ -196,7 +196,7 @@ read raw body (no JSON re-serialisation)
 
 - Some Pakistani gateways sign callbacks with a shared salt over the request fields rather than a signed event. For those, the callback is treated as a **hint** and the authoritative status comes from the gateway's server-to-server **status inquiry API** before money state changes.
 - Out-of-order events are safe: transitions only move forward (e.g. `CAPTURED` is never overwritten by a late `PENDING`).
-- **Idempotency everywhere money or stock moves:** checkout (client key + `idempotency_keys`), payment initiation (`payments.idempotency_key`, passed to providers that support it), refunds (`refunds.idempotency_key`), courier bookings (`booking_idempotency_key` + lookup-by-reference before retrying a timed-out booking), notifications (`dedupe_key`), webhooks (`webhook_events` unique). A replayed key with a different request body (or owner) returns 422 `idempotency_key_reused`, so the client mints a new key; a key whose first request is still running returns 409 `idempotency_conflict`, so the client retries later. Each attempt holds the key with a fencing token: if its lock lapses and a retry takes the key over, the earlier attempt can no longer complete it (its transaction rolls back) or release it.
+- **Idempotency everywhere money or stock moves:** checkout (client key + `idempotency_keys`), payment initiation (`payments.idempotency_key`, passed to providers that support it), refunds (`refunds.idempotency_key`), courier bookings (`booking_idempotency_key` + lookup-by-reference before retrying a timed-out booking), notifications (`dedupe_key`), webhooks (`webhook_events` unique). A replayed key with a different request body (or owner) returns 422 `idempotency_key_reused`, so the client mints a new key; a key whose first request is still running returns 409 `idempotency_conflict`, so the client retries later. Each attempt holds the key with a fencing token, and its lock is renewed while the work runs, so a retry can take the key over only after the attempt's process has died. The earlier attempt can then no longer complete the key (a completion inside its transaction rolls back) or release it. Effects outside the database can't be rolled back, which is why provider calls also carry the idempotency key.
 - **PCI DSS scope:** card data never touches NOVYRA servers. Only provider-hosted pages or provider-hosted fields are used (SAQ A). PAN, CVV, wallet PINs and OTPs are never logged or stored.
 
 ## 12. Security headers
@@ -254,11 +254,11 @@ frame-ancestors 'none'; base-uri 'self'; object-src 'none'; upgrade-insecure-req
 
 - Uploads are direct-to-storage with **signed, short-lived upload tickets** that fix folder, max size and MIME type. Afterwards the server re-reads the object's metadata from the provider before creating `media_assets`.
 - Payment proofs and shipping labels are `PRIVATE`. They're reachable only through signed URLs with a ≤ 5 min TTL, issued to the owning customer or staff with the right permission.
-- Logs never carry secrets or PII (`createLogger` in `packages/core`). Every logged object is walked to any depth, arrays and errors included: a value whose key names a password, token, secret, API key, authorization, cookie, email, phone, IBAN, card number, CVV, OTP or PIN is replaced, whatever its case or separators, and email addresses and card numbers (Luhn-valid digit runs) are masked inside strings, messages included. Code still logs deliberately: data goes in the object argument, messages stay generic. Sentry has PII scrubbing on.
-- The **audit log** records every staff mutation, permission denial, auth failure, webhook signature failure and data export, with actor, IP, user agent and request ID.
+- Logs never carry secrets or PII (`createLogger` in `packages/core`). Every logged object, binding and printf-style argument is walked (arrays and errors included; content nested more than 10 levels deep is replaced by `[truncated]`). A value whose key names a password, token, secret, API key, authorization, cookie, email, phone or mobile number, IBAN, account or card number, CVV, OTP, PIN or CNIC is replaced, whatever its case or separators (`otpCode`, `card_cvc` and `walletPin` included). Email addresses and card numbers (Luhn-valid digit runs) are masked inside strings, messages included, and card numbers held as numbers are replaced. Code still logs deliberately: data goes in the object argument, messages stay generic. Sentry has PII scrubbing on.
+- The **audit log** records every staff mutation, permission denial, auth failure, webhook signature failure and data export, with actor, IP, user agent and request ID. A client may supply its own request ID (any well-formed UUID is kept), so it correlates log lines but proves nothing about who sent the request.
 
 ## 15. Supply chain and delivery
 
-- Exact dependency pins + committed lockfile, `allowBuilds` allowlist for install scripts, Renovate grouped updates, `pnpm audit` gate.
+- Exact dependency pins + committed lockfile, `allowBuilds` allowlist for install scripts, Renovate grouped updates, and (from Phase 1, docs/08) a `pnpm audit` gate in CI.
 - GitHub Actions pinned to commit SHAs. Least-privilege `GITHUB_TOKEN`. Production deploys only from protected `main` with required review + green CI.
 - Pre-launch: OWASP ASVS L2 checklist, authorisation matrix tests (every admin action called with every role), dependency review, and a third-party penetration test before taking card payments.

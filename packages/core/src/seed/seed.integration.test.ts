@@ -81,6 +81,17 @@ describe("seedReferenceData", () => {
     });
     expect(granted).toBeNull();
   });
+
+  test("refuses to take over a custom role that uses a system role's key", async () => {
+    await seedReferenceData(prisma);
+    const editor = await prisma.role.update({ where: { key: "content_editor" }, data: { isSystem: false } });
+    try {
+      await expect(seedReferenceData(prisma)).rejects.toThrow(/belongs to a custom role/);
+      expect((await prisma.role.findUniqueOrThrow({ where: { id: editor.id } })).isSystem).toBe(false);
+    } finally {
+      await prisma.role.update({ where: { id: editor.id }, data: { isSystem: true } });
+    }
+  });
 });
 
 describe("settings", () => {

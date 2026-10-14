@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   assertRequestIds,
   assertSecurityHeaders,
+  runScript,
   startApp,
   type StartedApp,
 } from "@novyra/config/testing/next-server";
@@ -89,10 +90,24 @@ describe("admin without its database", () => {
 });
 
 describe("admin with an invalid environment", () => {
+  const invalid = { ...local, ADMIN_URL: "not a url" };
+
   test("refuses to start", async () => {
-    const app = await startApp({ cwd, env: { ...local, ADMIN_URL: "not a url" } });
-    await app.stop();
-    assert.equal(app.exitCode, 1, app.output);
+    const app = await startApp({ cwd, env: invalid });
+    try {
+      // startApp returns when the process exits or the server answers: a refused start exits.
+      assert.equal(app.exitCode, 1, `the server started instead of being refused:\n${app.output}`);
+    } finally {
+      await app.stop();
+    }
     assert.match(app.output, /ADMIN_URL/);
+    assert.doesNotMatch(app.output, /Ready in/);
+  });
+
+  test("refuses to build", async () => {
+    const result = await runScript({ cwd, script: "build", env: invalid, timeoutMs: 20_000 });
+    assert.equal(result.exitCode, 1, result.output);
+    assert.match(result.output, /ADMIN_URL/);
+    assert.doesNotMatch(result.output, /Creating an optimized production build/);
   });
 });
