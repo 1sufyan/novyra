@@ -20,7 +20,7 @@ the two-week wait in rule 3 automatically.
 | Concern | Choice | Version | Why |
 |---|---|---|---|
 | Web framework | Next.js (App Router) | **16.3.8** ✅ | Server Components and Server Actions keep secrets and business logic on the server. `"use cache"` / `cacheTag` give a fast catalog, `proxy.ts` (Next 16's renamed middleware) handles cheap request gating, and `after()` handles post-response work. Pinned to 16.3.8 because 16.4.0 (released 2026-10-06) is inside the two-week wait in rule 3 below. Renovate proposes 16.4 once it qualifies. |
-| UI runtime | React / React DOM | 19.3.0 ✅ | Required by Next 16. React Compiler (`babel-plugin-react-compiler` 1.0) enabled. |
+| UI runtime | React / React DOM | 19.3.0 ✅ | Required by Next 16. React Compiler (`babel-plugin-react-compiler` 1.0) is enabled with the first UI in Phase 2 (not installed yet). |
 | Styling | Tailwind CSS v4 (`@tailwindcss/postcss`) | 4.3.3 | CSS-first `@theme` tokens shared through `packages/ui`. |
 | Motion | **Motion** (`motion`, formerly Framer Motion) | 14.1.1 | Same maintainers and API. `framer-motion` is now the legacy package name. Import from `motion/react`. |
 | Internationalisation | `next-intl` | 4.14.9 | Storefront strings in message files from day one. English only at launch, so Urdu (right-to-left) can be added later without a rebuild (decision D5). Peer-compatible with Next 16. |
@@ -29,7 +29,7 @@ the two-week wait in rule 3 automatically.
 | Database | PostgreSQL | **17 or 18** (managed) | Schema verified on 16.15 locally; uses nothing newer than PG 13 (`pg_trgm` as a trusted extension). |
 | Auth | Better Auth | 1.7.7 | Server-side DB sessions, signed httpOnly cookies, built-in CSRF/origin checks, rate limiting, TOTP 2FA plugin, Prisma adapter. Peer-compatible with Next 16 / Prisma 7. Auth.js v5 never left beta and NextAuth v4 is legacy. |
 | Password hashing | Argon2id via `@node-rs/argon2` | 2.2.2 | Prebuilt native binaries (no node-gyp). Plugged into Better Auth's `password.hash/verify`. |
-| Env validation | Zod schemas in `packages/env` | 4.6.7 ✅ | Separate server and client schemas. Each app validates the server environment when it boots and refuses to start if anything is missing or invalid; errors name the variable, never its value. No extra library needed. |
+| Env validation | Zod schemas in `packages/env` | 4.6.7 ✅ | Separate server and client schemas. `check-env` runs before `next dev`, `next build` and `next start` and refuses to continue if anything is missing or invalid; the instrumentation hook re-checks at runtime. Errors name the variable, never its value. No extra library needed. |
 | Money arithmetic | `decimal.js` (inside the `Money` value object) | 10.6.0 ✅ | Exact decimal maths with half-up rounding; JS numbers are rejected. |
 | Rate limiting / cache | Upstash Redis + `@upstash/ratelimit` | 1.39.0 / 2.2.0 | HTTP-based, works in serverless and in the Node proxy. |
 | Bot protection | Cloudflare Turnstile (`@marsidev/react-turnstile`) | 1.6.2 | Sign-up, password reset, COD checkout, newsletter, reviews. |

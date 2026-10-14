@@ -102,7 +102,7 @@ apps/*  ──►  packages/core  ──►  packages/db
    └──► packages/emails ◄── core/notifications
 ```
 
-- Every entry point an app imports that can reach the database or secrets (`@novyra/core/platform`, `@novyra/env/server`, and each service module as it is added) starts with `import "server-only"`. A Client Component that imports one fails the build (verified in Phase 0). Internal modules used only by other server code, scripts and tests don't carry the marker; tests alias it to an empty stub.
+- Every entry point an app imports that can reach the database or secrets (`@novyra/core/platform`, `@novyra/core/shared`, `@novyra/core/settings`, `@novyra/env/server`, and each service module as it is added) starts with `import "server-only"`. A Client Component that imports one fails the build (verified in Phase 0). Internal modules used only by other server code, scripts and tests don't carry the marker; tests alias it to an empty stub.
 - Apps never import `@novyra/db` directly. Data access goes through core services, which return **DTOs, never Prisma models**. That prevents leaking columns such as `costPrice`, `password` or `payoutDetailsEncrypted`.
 - `core` modules call each other only through their `index.ts` public API.
 
@@ -211,7 +211,7 @@ flowchart LR
   TX["Service transaction<br/>(state change + INSERT outbox_events)"] --> COMMIT((commit))
   COMMIT -->|"after()"| D1[Dispatcher run]
   CRON["Vercel Cron · every minute"] --> D1
-  D1 -->|"UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)"| CLAIM[Claim batch]
+  D1 -->|"UPDATE … WHERE id = (SELECT … LIMIT 1 FOR UPDATE SKIP LOCKED)"| CLAIM["Claim next event<br/>(repeat up to the batch size)"]
   CLAIM --> H{Handler by event type}
   H --> N1[notifications.enqueue]
   H --> N2[analytics.serverConversion]
@@ -222,8 +222,8 @@ flowchart LR
 ```
 
 - **Delivery is at least once**, so every handler is idempotent. Notifications dedupe on `notifications.dedupe_key`, shipments on `booking_idempotency_key`, analytics on `event_id`.
-- Concurrent dispatchers can't claim the same event (`FOR UPDATE SKIP LOCKED`, covered by `packages/db/tests/integrity.test.ts`).
-- Stuck `PROCESSING` rows (lock older than 5 min) go back to `PENDING`.
+- Concurrent dispatchers can't claim the same event (`FOR UPDATE SKIP LOCKED`). Each event is claimed just before its handler runs, so a long run never holds events it hasn't started, and only the claim that still holds a row (worker id + attempt number) may finish it. Covered by `packages/core/src/shared/outbox.integration.test.ts`.
+- Stuck `PROCESSING` rows (lock older than 5 min: the worker crashed, was killed or hung) count as a failed attempt: they go back to `PENDING`, or to `DEAD` once they have used all 8 attempts, so a handler that never returns can't cycle forever. Handlers must finish well inside that window (outbound calls time out after 10 s), and a run can be given a time budget so it ends before its platform limit.
 
 **Scheduled jobs** (`/api/cron/<job>`, authenticated with `Authorization: Bearer ${CRON_SECRET}`):
 
@@ -235,7 +235,7 @@ flowchart LR
 | `shipments-sync` | every 30 min | Poll tracking for couriers without webhooks (`next_sync_at`). |
 | `review-requests` | daily | Ask for a review N days after delivery. |
 | `abandoned-carts` | hourly | Only for carts with marketing consent. |
-| `cleanup` | daily | Expired sessions, verifications, idempotency keys, abandoned guest carts. |
+| `cleanup` | daily | Expired sessions, verifications, idempotency keys, abandoned guest carts, `DONE` outbox events older than 30 days. |
 
 > Vercel Cron runs every minute only on paid plans. On Hobby, use an external scheduler or the self-hosted worker
 > (`pnpm --filter @novyra/core jobs:run`, which runs the same job functions on an interval).
@@ -254,7 +254,7 @@ flowchart LR
 ## 7. Observability and operations
 
 - **Request IDs:** `proxy.ts` assigns `x-request-id`. It flows into logs, audit logs, Sentry and outbound provider calls.
-- **Structured logs** (pino) with redaction paths: `*.password`, `*.token`, `*.secret`, `authorization`, `cookie`, `*.cardNumber`, `*.iban`, `*.phone`, `*.email`.
+- **Structured logs** (pino, `createLogger`). Every logged object is scrubbed at any depth: values under keys naming passwords, tokens, secrets, API keys, authorization, cookies, emails, phones, IBANs, card numbers, CVVs, OTPs or PINs are replaced (case and separators ignored), and emails and card numbers inside strings are masked (docs/03 §14).
 - **Sentry** for errors and performance in both apps. PII scrubbing on, source maps uploaded from CI only.
 - **Health:** `GET /api/health` checks DB connectivity and outbox backlog. External uptime monitoring alerts on failure.
 - **Business alerts:** outbox `DEAD` events, payments stuck in `REQUIRES_ACTION`, unverified bank transfers older than 24h, shipments with no tracking update for 72h, low stock, refund failures.

@@ -6,14 +6,15 @@
 novyra/
 ├── package.json                      ✅ workspace root, scripts, engines (Node 24), packageManager (pnpm 11)
 ├── pnpm-workspace.yaml               ✅ workspaces + allowBuilds (install-script allowlist)
-├── turbo.json                        ✅ task graph: generate → lint · typecheck · test · build
+├── turbo.json                        ✅ task graph: generate (Prisma client) → lint · typecheck · test · build → smoke;
+│                                        a `transit` node keys each task's cache on the packages it imports
 ├── .env.example                      ✅ every env var, documented (see 09)
 ├── .gitignore · .nvmrc · .prettierrc.json · .prettierignore   ✅
 ├── renovate.json                     ✅ weekly grouped updates, two-week wait for framework minors
 ├── docker-compose.yml                ✅ local Postgres 17 + Mailpit
 ├── docker/postgres/init.sql          ✅ creates the shadow and test databases
 ├── .github/workflows/
-│   ├── ci.yml                        ✅ format · schema · drift · lint · typecheck · unit · migrate · seed ×2 · integration · build
+│   ├── ci.yml                        ✅ format · schema · drift · typecheck · lint · unit · migrate · seed ×2 · integration · build · smoke
 │   └── release.yml                      migrate:deploy (migrator role) → deploy apps
 ├── docs/                             ✅ architecture (this folder)
 │
@@ -23,7 +24,7 @@ novyra/
 │   │   ├── messages/en.json             every storefront string (next-intl). Urdu later = messages/ur.json
 │   │   ├── src/
 │   │   │   ├── proxy.ts              ✅ request id (later: cheap auth redirects; NOT a security boundary)
-│   │   │   ├── instrumentation.ts    ✅ refuses to boot with an invalid environment (later: Sentry / OpenTelemetry)
+│   │   │   ├── instrumentation.ts    ✅ re-checks the environment at runtime (later: Sentry / OpenTelemetry)
 │   │   │   ├── i18n/request.ts          next-intl config (single `en` locale at launch)
 │   │   │   ├── app/
 │   │   │   │   ├── layout.tsx · globals.css (imports @novyra/ui theme)
@@ -59,9 +60,11 @@ novyra/
 │   │   │   │   ├── account/ · reviews/ · wishlist/ · newsletter/ · consent/
 │   │   │   ├── components/              site chrome: header, mega-menu, footer, search overlay
 │   │   │   └── lib/                     defineAction(), auth-client, cart cookie, seo helpers, image loader
+│   │   ├── tests/smoke.test.ts       ✅ built app: headers, CSP, request ids, health 200/503, invalid env refused
 │   │   └── tests/e2e/                   Playwright: browse → cart → COD checkout, bank transfer, account
 │   │
 │   └── admin/                        ✅ admin.novyra.pk — Next.js 16 (Phase 0: shell, placeholder page, health)
+│       ├── tests/smoke.test.ts       ✅ built app: nonce on every script, private headers, health, invalid env refused
 │       └── src/
 │           ├── proxy.ts              ✅ request id · per-request nonce CSP · no-store (later: auth redirect)
 │           ├── app/
@@ -84,13 +87,14 @@ novyra/
 │   │   ├── load-env.ts               ✅ loads packages/db/.env, then the root .env
 │   │   ├── prisma/
 │   │   │   ├── schema.prisma         ✅ 58 models, 34 enums
-│   │   │   └── migrations/           ✅ init + integrity_constraints
+│   │   │   └── migrations/           ✅ init · integrity_constraints · idempotency_lock_token
 │   │   ├── src/
 │   │   │   ├── index.ts              ✅ public entry: generated client + helpers
 │   │   │   ├── client.ts             ✅ PrismaClient + @prisma/adapter-pg, singleton per process
-│   │   │   ├── transaction.ts        ✅ withTransaction(): timeout, retry on 40001/40P01
+│   │   │   ├── transaction.ts        ✅ withTransaction(): timeout, retry on 40001/40P01 (statement or commit)
 │   │   │   └── generated/prisma/        (git-ignored) generated client
-│   │   └── tests/                    ✅ integrity.test.ts (DB invariants incl. concurrency) · transaction.test.ts (real deadlocks)
+│   │   ├── turbo.json                ✅ `generate` hashes only the Prisma schema and config
+│   │   └── tests/                    ✅ integrity.test.ts (DB invariants incl. concurrency) · transaction.test.ts (real deadlocks, SERIALIZABLE conflicts)
 │   │
 │   ├── core/                         ✅ @novyra/core — the backend
 │   │   ├── scripts/seed.ts           ✅ `pnpm db:seed`
@@ -132,12 +136,14 @@ novyra/
 │   │       └── guards.ts                requireUser · requireStaff · requirePermission · requireFreshSession
 │   │
 │   ├── validation/                      @novyra/validation: isomorphic Zod schemas (address, checkout, product, coupon, review, …)
-│   ├── env/                          ✅ @novyra/env: server.ts (validated, cached) · client.ts (NEXT_PUBLIC_ allowlist)
+│   ├── env/                          ✅ @novyra/env: schema.ts (Zod, no values) · server.ts (server-only, validated, cached)
+│   │                                    · client.ts (NEXT_PUBLIC_ allowlist) · bin/check-env (refuses dev/build/start)
 │   ├── ui/                              @novyra/ui: design tokens (Tailwind v4 @theme), primitives, motion presets
 │   ├── emails/                          @novyra/emails: React Email templates + preview server
 │   ├── analytics/                       @novyra/analytics: track(), consent store, GA4 + Meta Pixel destinations
 │   └── config/                       ✅ tsconfig presets · ESLint presets (incl. import boundaries) · next/security-headers
 │                                        · bin/with-root-env (runs a command with the root .env loaded)
+│                                        · testing/next-server (starts a built app for smoke tests)
 ```
 
 ## Dependency rules

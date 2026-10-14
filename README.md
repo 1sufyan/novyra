@@ -34,33 +34,38 @@ cp .env.example .env              # works as-is with docker compose
 docker compose up -d              # PostgreSQL 17 (+ shadow and test databases) and Mailpit
 
 pnpm db:migrate:deploy            # apply migrations
-pnpm db:seed                      # permissions, roles, cities, methods, settings (idempotent)
+pnpm db:seed                      # generates the Prisma client, then seeds permissions, roles, cities,
+                                  # methods and settings (idempotent)
 pnpm dev                          # storefront http://localhost:3000 · admin http://localhost:3001
 ```
 
-Every command reads the repository-root `.env`; variables exported in the shell take precedence.
+Every command reads the repository-root `.env`, and variables exported in the shell take precedence. Under
+Turborepo's strict environment mode, `pnpm build` and the other turbo tasks see only the variables listed in
+`turbo.json`; `pnpm dev` runs in loose mode and sees everything ([docs/09](docs/09-environment.md)).
 
 | Command | What it does |
 |---|---|
 | `pnpm lint` · `pnpm typecheck` · `pnpm format:check` | Static checks across the monorepo (Turborepo) |
 | `pnpm test` | Unit tests (no database) |
 | `pnpm db:test:prepare && pnpm test:integration` | Migrates `TEST_DATABASE_URL`, then runs every database test |
-| `pnpm build` | Production builds of both apps |
+| `pnpm build` | Validates the environment, then builds both apps (generates the Prisma client first) |
+| `pnpm test:smoke` | Starts the built apps and checks headers, CSP nonces, request ids, health and env refusal |
+| `pnpm db:generate` | Regenerate the Prisma client (git-ignored) after editing `schema.prisma` |
 | `pnpm db:migrate:dev --name <change>` | Create a migration after editing `schema.prisma` |
 | `pnpm db:studio` | Browse the local database |
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all of the above on every push, against a real PostgreSQL,
-including a migration-drift check and seeding twice.
+including a migration-drift check, seeding twice and the smoke tests.
 
 ## What is tested
 
 | Area | Proof |
 |---|---|
 | Schema and migrations | `prisma validate`; no drift between migrations, schema and a migrated database; applies to an empty database in CI |
-| Database integrity (`packages/db/tests`) | 14 integrity tests (8 buyers for 3 units → exactly 3 succeed; coupon limits; refund caps; append-only ledgers) and 5 transaction tests (real deadlocks are retried and both sides commit) |
-| Backend kernel (`packages/core`) | Unit: money arithmetic and allocation, AES-GCM field encryption with key rotation, HMAC, error exposure rules, SSRF-safe HTTP client, log redaction. Integration: idempotency under concurrency, outbox delivering each event exactly once across concurrent workers, health, seed idempotency |
-| Environment | Invalid or missing variables stop the apps from booting, without echoing values |
-| Apps | Security headers and CSP on every response; per-request CSP nonce on every admin script; request ids that clients can't forge into logs; `/api/health` returns 503 when background work is failing |
+| Database integrity (`packages/db/tests`) | 14 integrity tests (8 buyers for 3 units → exactly 3 succeed; coupon limits; refund caps; append-only ledgers) and 6 transaction tests (real deadlocks and SERIALIZABLE commit conflicts are retried until both sides commit) |
+| Backend kernel (`packages/core`) | Unit: money arithmetic and allocation, AES-GCM field encryption (key rotation, full-length tags, canonical keys), HMAC, error exposure rules, SSRF-safe HTTP client (fetch-style redirects, no credentials across origins), log redaction at any depth. Integration: idempotency under concurrency and lock takeover (a superseded attempt can't complete or release the key), outbox (concurrent workers never share an event, slow runs don't cause duplicates, abandoned events end up DEAD), health (including a database that never answers), seed idempotency |
+| Environment | `check-env` refuses to build or start with invalid or missing variables, naming each problem without echoing values (unit tests plus a smoke test) |
+| Apps (`pnpm test:smoke`) | Security headers and CSP on every response; a fresh nonce on every admin script per request; request ids are either a well-formed UUID or replaced, so clients can't inject text into logs; `/api/health` is 200 when healthy and 503 when the database is unreachable |
 
 ## Principles
 
