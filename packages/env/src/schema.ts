@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 /**
- * Server-side environment schema. Values are never echoed in errors. This module holds no values,
- * so next.config.ts can import it to refuse to build or start with an invalid environment; app
- * code reads the validated values through `@novyra/env/server`.
+ * Server-side environment schema. Values are never echoed in errors. This module holds no values
+ * and doesn't import server-only, so the `check-env` bin can run it before `next dev/build/start`;
+ * app code reads the validated values through `@novyra/env/server`.
  * Integration-specific variables (gateways, couriers, email…) are validated by each adapter's own
  * config schema, so a disabled integration never blocks boot. Full list: docs/09-environment.md.
  */

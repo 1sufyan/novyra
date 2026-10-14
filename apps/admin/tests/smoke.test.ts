@@ -6,7 +6,12 @@ import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { startApp, type StartedApp } from "@novyra/config/testing/next-server";
+import {
+  assertRequestIds,
+  assertSecurityHeaders,
+  startApp,
+  type StartedApp,
+} from "@novyra/config/testing/next-server";
 
 const cwd = fileURLToPath(new URL("..", import.meta.url));
 const local = {
@@ -46,18 +51,40 @@ describe("admin", () => {
     assert.notEqual(nonceOf(second.headers.get("content-security-policy") ?? ""), nonce);
   });
 
-  test("is private: noindex, no caching, same-origin opener", async () => {
-    const response = await fetch(app.url);
-    assert.equal(response.headers.get("x-robots-tag"), "noindex, nofollow");
-    assert.equal(response.headers.get("cache-control"), "private, no-store");
-    assert.equal(response.headers.get("cross-origin-opener-policy"), "same-origin");
-    assert.equal(response.headers.get("x-frame-options"), "DENY");
+  test("sends the security headers on pages, API routes and 404s, and is private", async () => {
+    for (const path of ["/", "/api/health", "/no-such-page"]) {
+      const response = await fetch(`${app.url}${path}`);
+      assertSecurityHeaders(response, { coop: "same-origin" });
+      assert.equal(response.headers.get("x-robots-tag"), "noindex, nofollow", path);
+    }
+    const page = await fetch(app.url);
+    assert.equal(page.headers.get("cache-control"), "private, no-store");
+  });
+
+  test("keeps a well-formed request id and replaces anything else", async () => {
+    await assertRequestIds(app.url);
   });
 
   test("/api/health answers 200", async () => {
     const response = await fetch(`${app.url}/api/health`);
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { status: "ok" });
+  });
+});
+
+describe("admin without its database", () => {
+  test("/api/health answers 503", async () => {
+    const app = await startApp({
+      cwd,
+      env: { ...local, DATABASE_URL: "postgresql://nobody:wrong@127.0.0.1:1/none" },
+    });
+    try {
+      const response = await fetch(`${app.url}/api/health`);
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), { status: "degraded" });
+    } finally {
+      await app.stop();
+    }
   });
 });
 

@@ -3,19 +3,23 @@
  * DATABASE_URL must point to a migrated database (the root .env or the shell).
  */
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { startApp, type StartedApp } from "@novyra/config/testing/next-server";
+import {
+  assertRequestIds,
+  assertSecurityHeaders,
+  startApp,
+  type StartedApp,
+} from "@novyra/config/testing/next-server";
 
 const cwd = fileURLToPath(new URL("..", import.meta.url));
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const local = {
   APP_ENV: "test",
   NEXT_PUBLIC_SITE_URL: "http://localhost:3000",
   ADMIN_URL: "http://localhost:3001",
 };
+const unreachableDatabase = "postgresql://nobody:wrong@127.0.0.1:1/none";
 
 describe("storefront", () => {
   let app: StartedApp;
@@ -25,30 +29,17 @@ describe("storefront", () => {
   });
   after(() => app.stop());
 
-  test("sends the security headers and the allowlist CSP", async () => {
-    const response = await fetch(app.url);
-    assert.equal(response.status, 200);
-    const headers = response.headers;
-    assert.equal(headers.get("x-content-type-options"), "nosniff");
-    assert.equal(headers.get("x-frame-options"), "DENY");
-    assert.equal(headers.get("cross-origin-opener-policy"), "same-origin-allow-popups");
-    assert.ok(headers.get("referrer-policy"));
-    assert.ok(headers.get("permissions-policy"));
-    assert.equal(headers.get("x-powered-by"), null);
-    const csp = headers.get("content-security-policy") ?? "";
-    for (const directive of ["default-src 'self'", "frame-ancestors 'none'", "object-src 'none'"]) {
-      assert.ok(csp.includes(directive), `CSP has ${directive}: ${csp}`);
+  test("sends the security headers and the allowlist CSP on pages, API routes and 404s", async () => {
+    for (const path of ["/", "/api/health", "/no-such-page"]) {
+      const response = await fetch(`${app.url}${path}`);
+      assertSecurityHeaders(response, { coop: "same-origin-allow-popups" });
     }
+    assert.equal((await fetch(`${app.url}/no-such-page`)).status, 404);
   });
 
   test("keeps a well-formed request id and replaces anything else", async () => {
-    const id = randomUUID();
-    const kept = await fetch(app.url, { headers: { "x-request-id": id } });
-    assert.equal(kept.headers.get("x-request-id"), id);
-    const replaced = await fetch(app.url, { headers: { "x-request-id": "attacker-chosen text" } });
-    const generated = replaced.headers.get("x-request-id") ?? "";
-    assert.match(generated, UUID);
-    assert.notEqual(generated, "attacker-chosen text");
+    await assertRequestIds(app.url);
+    await assertRequestIds(`${app.url}/api/health`);
   });
 
   test("/api/health answers 200 and is never cached", async () => {
@@ -61,10 +52,7 @@ describe("storefront", () => {
 
 describe("storefront without its database", () => {
   test("/api/health answers 503 and exposes only the status", async () => {
-    const app = await startApp({
-      cwd,
-      env: { ...local, DATABASE_URL: "postgresql://nobody:wrong@127.0.0.1:1/none" },
-    });
+    const app = await startApp({ cwd, env: { ...local, DATABASE_URL: unreachableDatabase } });
     try {
       const response = await fetch(`${app.url}/api/health`);
       assert.equal(response.status, 503);
@@ -82,5 +70,16 @@ describe("storefront with an invalid environment", () => {
     assert.equal(app.exitCode, 1, app.output);
     assert.match(app.output, /Invalid environment configuration/);
     assert.match(app.output, /must use https:\/\/ when APP_ENV=production/);
+  });
+
+  test("started without check-env, the runtime re-check answers 500 instead of serving", async () => {
+    const app = await startApp({ cwd, checkEnv: false, env: { ...local, ADMIN_URL: "not a url" } });
+    try {
+      assert.equal(app.exitCode, undefined, app.output);
+      assert.equal((await fetch(`${app.url}/api/health`)).status, 500);
+      assert.equal((await fetch(app.url)).status, 500);
+    } finally {
+      await app.stop();
+    }
   });
 });

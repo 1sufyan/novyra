@@ -13,5 +13,14 @@ export interface StartedApp {
 export function startApp(options: {
   cwd: string;
   env?: Record<string, string | undefined>;
+  /** false: run `next start` without the check-env step, to exercise the runtime re-check. */
+  checkEnv?: boolean;
   timeoutMs?: number;
 }): Promise<StartedApp>;
+
+export function assertSecurityHeaders(
+  response: Response,
+  options: { coop: "same-origin" | "same-origin-allow-popups" },
+): void;
+
+export function assertRequestIds(url: string): Promise<void>;

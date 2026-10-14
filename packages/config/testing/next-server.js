@@ -1,5 +1,7 @@
-// Starts a built Next.js app through its own `start` script, for smoke tests (`pnpm test:smoke`).
+// Starts a built Next.js app for smoke tests (`pnpm test:smoke`), plus shared assertions.
+import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 
 /** A port that was free a moment ago. */
@@ -12,15 +14,18 @@ export async function freePort() {
 }
 
 /**
- * Runs `pnpm start --port <port>` in `cwd` with `env` merged over the current environment.
- * Resolves once the server answers /api/health, or once the process exits (check `exitCode`).
+ * Runs the app in `cwd` with `env` merged over the current environment: through its `start` script
+ * (check-env, then next start), or with `checkEnv: false` through `next start` alone, to exercise
+ * the runtime re-check. Resolves once the server answers /api/health, or once the process exits
+ * (check `exitCode`).
  */
-export async function startApp({ cwd, env = {}, timeoutMs = 30_000 }) {
-  const port = await freePort();
+export async function startApp({ cwd, env = {}, checkEnv = true, timeoutMs = 30_000 }) {
+  const port = String(await freePort());
   const pnpm = process.env.npm_execpath;
-  const [command, args] = pnpm
-    ? [process.execPath, [pnpm, "start", "--port", String(port)]]
-    : ["pnpm", ["start", "--port", String(port)]];
+  const pnpmArgs = checkEnv
+    ? ["start", "--port", port]
+    : ["exec", "with-root-env", "next", "start", "--port", port];
+  const [command, args] = pnpm ? [process.execPath, [pnpm, ...pnpmArgs]] : ["pnpm", pnpmArgs];
   const child = spawn(command, args, {
     cwd,
     env: { ...process.env, ...env },
@@ -63,4 +68,42 @@ export async function startApp({ cwd, env = {}, timeoutMs = 30_000 }) {
   }
   await app.stop();
   throw new Error(`App in ${cwd} did not start within ${timeoutMs} ms:\n${output}`);
+}
+
+/** The headers both apps send on every response (docs/03-security.md §12). */
+export function assertSecurityHeaders(response, { coop }) {
+  const headers = response.headers;
+  const where = `${response.url} (${response.status})`;
+  assert.equal(headers.get("x-content-type-options"), "nosniff", where);
+  assert.equal(headers.get("x-frame-options"), "DENY", where);
+  assert.equal(headers.get("referrer-policy"), "strict-origin-when-cross-origin", where);
+  assert.match(headers.get("permissions-policy") ?? "", /camera=\(\)/, where);
+  assert.equal(headers.get("cross-origin-opener-policy"), coop, where);
+  assert.equal(headers.get("cross-origin-resource-policy"), "same-site", where);
+  assert.match(headers.get("strict-transport-security") ?? "", /max-age=\d+/, where);
+  assert.equal(headers.get("x-powered-by"), null, where);
+  const csp = headers.get("content-security-policy") ?? "";
+  for (const directive of [
+    "default-src 'self'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "base-uri 'self'",
+  ]) {
+    assert.ok(csp.includes(directive), `${where}: CSP has ${directive}: ${csp}`);
+  }
+  assert.ok(!csp.includes("'unsafe-eval'"), `${where}: no 'unsafe-eval' in production: ${csp}`);
+}
+
+/** A well-formed incoming request id is kept; anything else is replaced by a fresh UUID. */
+export async function assertRequestIds(url) {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const id = randomUUID();
+  const kept = await fetch(url, { headers: { "x-request-id": id } });
+  assert.equal(kept.headers.get("x-request-id"), id);
+  for (const forged of ["attacker-chosen text", `${id}x`, ""]) {
+    const response = await fetch(url, { headers: { "x-request-id": forged } });
+    const generated = response.headers.get("x-request-id") ?? "";
+    assert.match(generated, UUID);
+    assert.notEqual(generated, forged);
+  }
 }
