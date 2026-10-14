@@ -132,9 +132,24 @@ describe("logger", () => {
       "contactNumber",
       "bankAccountNumber",
       "customerCnic",
+      "OTPCode",
+      "otpcode",
+      "OTPCODE",
+      "CNICNumber",
+      "cnicNo",
+      "walletpin",
+      "PINCode",
+      "CVVCode",
+      "accountNo",
+      "account_no",
+      "bankAccountNo",
+      "acctNumber",
+      "cardNo",
+      "card_no",
     ];
     for (const key of sensitive) expect(isSensitiveKey(key), key).toBe(true);
-    for (const key of ["orderId", "spinner", "pinned", "panel", "company", "status", "optional"]) {
+    const ordinary = ["orderId", "spinner", "pinned", "panel", "company", "status", "optional"];
+    for (const key of [...ordinary, "cardNote", "accountTitle", "bankName", "expiresAt"]) {
       expect(isSensitiveKey(key), key).toBe(false);
     }
     const { lines, logger } = capture();
@@ -145,10 +160,13 @@ describe("logger", () => {
 
   test("masks keys, keeps __proto__ keys visible, and stays linear on long strings", () => {
     const { lines, logger } = capture();
-    logger.info({ deliveries: { "ayesha@example.com": "bounced" } }, "keys");
+    logger.info(
+      { deliveries: { "ayesha@example.com": "bounced", "bilal@example.com": "delivered" } },
+      "keys",
+    );
     logger.info({ body: JSON.parse('{"__proto__": {"orderId": "o-1"}, "b": 2}') as unknown }, "proto");
     expectClean(lines[0]);
-    expect(lines[0]).toMatchObject({ deliveries: { "[redacted]": "bounced" } });
+    expect(lines[0]).toMatchObject({ deliveries: { "[redacted]": "bounced", "[redacted]#2": "delivered" } });
     expect(lines[1]).toMatchObject({ body: { b: 2 } });
     expect(JSON.stringify(lines[1])).toContain('"__proto__":{"orderId":"o-1"}');
 
@@ -157,6 +175,13 @@ describe("logger", () => {
       maskText(long);
       expect(performance.now() - started).toBeLessThan(100);
     }
+  });
+
+  test("leaves epoch timestamps alone", () => {
+    const { lines, logger } = capture();
+    const stamps = Array.from({ length: 200 }, (_, i) => 1_760_000_000_000 + i);
+    logger.info({ stamps, micros: 1_760_000_000_000_123 }, `at ${stamps.join(" ")}`);
+    expect(JSON.stringify(lines[0])).not.toContain("[redacted]");
   });
 
   test("never throws on hostile values", () => {

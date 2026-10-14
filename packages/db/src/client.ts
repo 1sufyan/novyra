@@ -1,4 +1,5 @@
 import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
 
 import { PrismaClient } from "./generated/prisma/client.ts";
 
@@ -20,18 +21,26 @@ export interface CreatePrismaClientOptions {
 
 /** Creates a client over node-postgres. Prefer `getPrisma()` in application code. */
 export function createPrismaClient(connectionString: string, options: CreatePrismaClientOptions = {}) {
-  return new PrismaClient({
-    adapter: new PrismaPg({
-      connectionString,
-      max: options.maxConnections ?? 10,
-      connectionTimeoutMillis: options.connectionTimeoutMs ?? 5_000,
-      query_timeout: options.queryTimeoutMs ?? 30_000,
-      // TCP keep-alive lets the OS notice a peer that vanished without closing the connection.
-      keepAlive: true,
-      keepAliveInitialDelayMillis: 10_000,
-      idleTimeoutMillis: 30_000,
-    }),
+  const pool = new pg.Pool({
+    connectionString,
+    max: options.maxConnections ?? 10,
+    connectionTimeoutMillis: options.connectionTimeoutMs ?? 5_000,
+    query_timeout: options.queryTimeoutMs ?? 30_000,
+    // TCP keep-alive lets the OS notice a peer that vanished without closing the connection.
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
+    idleTimeoutMillis: 30_000,
   });
+  // A query that hit query_timeout is only abandoned by node-postgres: the statement keeps running
+  // on its connection, and a transaction's queued ROLLBACK may never be sent. Such a connection must
+  // not be reused (later queries would run inside the dead transaction, which could then commit),
+  // so it is closed when it comes back to the pool; the server then rolls the transaction back.
+  pool.on("release", (_error, client) => {
+    if (!(client as unknown as { readyForQuery: boolean }).readyForQuery) {
+      client.end().catch(() => undefined);
+    }
+  });
+  return new PrismaClient({ adapter: new PrismaPg(pool, { disposeExternalPool: true }) });
 }
 
 // One client per process. In development the module is re-evaluated on every hot reload,

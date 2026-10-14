@@ -39,20 +39,33 @@ const SENSITIVE_PARTS = [
   "creditcard",
 ];
 
+/** accountNo, card_num, cnicNo: a holder word followed by a number word. */
+const NUMBER_HOLDERS = new Set(["account", "acct", "acc", "card", "cnic"]);
+const NUMBER_WORDS = new Set(["no", "num", "nbr", "number"]);
+/** Keys written without any word boundary (otpcode, OTPCODE, walletpin). */
+const UNBROKEN_PREFIX = /^(otp|cvv|cvc|cnic)/;
+const UNBROKEN_SUFFIX = /(otp|pin|cvv|cvc|accountno|acctno|cardno)$/;
+
 export function isSensitiveKey(key: string): boolean {
   const normalised = key.toLowerCase().replace(/[^a-z0-9]/g, "");
   if (SENSITIVE_PARTS.some((part) => normalised.includes(part))) return true;
   const words = key
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2") // otpCode → otp Code
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2") // OTPCode → OTP Code
     .toLowerCase()
-    .split(/[^a-z]+/);
-  return words.some((word) => SENSITIVE_WORDS.has(word));
+    .split(/[^a-z]+/)
+    .filter(Boolean);
+  if (words.some((word) => SENSITIVE_WORDS.has(word))) return true;
+  for (let i = 0; i + 1 < words.length; i++) {
+    if (NUMBER_HOLDERS.has(words[i]!) && NUMBER_WORDS.has(words[i + 1]!)) return true;
+  }
+  return UNBROKEN_PREFIX.test(normalised) || UNBROKEN_SUFFIX.test(normalised);
 }
 
 // Every quantifier is bounded, so the work per start position is constant and masking stays linear
 // in the length of the text (unbounded `+` here backtracks quadratically on long runs without "@").
 const EMAIL = /[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63}){0,8}\.[a-z]{2,24}/gi;
-/** 13–19 digits, optionally grouped by spaces or dashes: the shape of a card number. */
+/** 13–19 digits, optionally grouped by spaces or dashes: candidates for isCardLike. */
 const CARD_LIKE = /\b\d(?:[ -]?\d){12,18}\b/g;
 
 function passesLuhn(digits: string): boolean {
@@ -68,8 +81,12 @@ function passesLuhn(digits: string): boolean {
   return sum % 10 === 0;
 }
 
+/**
+ * A card number: 14–19 digits starting with 2–6 (the major networks) that pass Luhn. That shape
+ * leaves out epoch-millisecond timestamps (13 digits) and epoch microseconds (starting with 1).
+ */
 function isCardLike(digits: string): boolean {
-  return digits.length >= 13 && digits.length <= 19 && passesLuhn(digits);
+  return /^[2-6]\d{13,18}$/.test(digits) && passesLuhn(digits);
 }
 
 /** Masks email addresses and card numbers (Luhn-valid digit runs) inside free text. */
@@ -106,7 +123,10 @@ function scrub(value: unknown, depth: number, ancestors: object[]): unknown {
   for (const [key, item] of Object.entries(value)) {
     // Keys can carry data too (a map keyed by email address). defineProperty keeps a "__proto__"
     // key as an ordinary property instead of changing the copy's prototype.
-    Object.defineProperty(result, maskText(key), {
+    // Masked keys stay distinct, so entries never overwrite each other.
+    let name = maskText(key);
+    for (let n = 2; Object.hasOwn(result, name); n++) name = `${maskText(key)}#${n}`;
+    Object.defineProperty(result, name, {
       value: isSensitiveKey(key) ? CENSOR : scrub(item, depth + 1, next),
       enumerable: true,
       writable: true,

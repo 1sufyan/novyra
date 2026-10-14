@@ -14,8 +14,9 @@ import { AppError } from "./errors.ts";
  *   … do the work; in the same transaction, call completeIdempotentRequest(tx, begun.record, …)
  *
  * A key is held for `lockMs`; holdIdempotencyKey() (used by runIdempotent) renews the lock while the
- * work runs, so in practice it lapses only when the process dies. A retry may then take the key
- * over, and the earlier attempt holds a stale token: its completeIdempotentRequest throws (rolling
+ * work runs, so it lapses only when the process dies or every renewal fails for longer than lockMs
+ * (database or pool unavailable). A retry may then take the key over, and the earlier attempt holds
+ * a stale token: its completeIdempotentRequest throws (rolling
  * its transaction back) and its failIdempotentRequest is a no-op. Side effects outside the database
  * cannot be rolled back, so commands pass the key on to providers that accept one.
  */

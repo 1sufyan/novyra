@@ -9,6 +9,7 @@ import { after, describe, test } from "node:test";
 
 import "../load-env.ts";
 import { createPrismaClient } from "../src/client.ts";
+import { withTransaction } from "../src/transaction.ts";
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) {
@@ -41,6 +42,54 @@ async function silenceableProxy() {
     },
   };
 }
+
+describe("createPrismaClient after a query timeout", () => {
+  test("a transaction cut off by the query timeout is rolled back, not left open on a pooled connection", async () => {
+    const admin = createPrismaClient(url!);
+    const app = createPrismaClient(url!, { maxConnections: 1, queryTimeoutMs: 500 });
+    try {
+      await admin.$executeRaw`DROP TABLE IF EXISTS client_timeout_probe`;
+      await admin.$executeRaw`CREATE TABLE client_timeout_probe (id int PRIMARY KEY, note text NOT NULL)`;
+      await admin.$executeRaw`INSERT INTO client_timeout_probe VALUES (0, 'original')`;
+
+      // Another session holds row 0 long past the transaction timeout plus the query timeout.
+      const locker = admin.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM client_timeout_probe WHERE id = 0 FOR UPDATE`;
+          await new Promise((resolve) => setTimeout(resolve, 2_500));
+        },
+        { timeout: 10_000 },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      await assert.rejects(
+        withTransaction(
+          app,
+          async (tx) => {
+            await tx.$executeRaw`INSERT INTO client_timeout_probe VALUES (1, 'from the failed transaction')`;
+            await tx.$executeRaw`UPDATE client_timeout_probe SET note = 'updated by the failed transaction' WHERE id = 0`;
+          },
+          { timeoutMs: 300, maxRetries: 0 },
+        ),
+      );
+      await locker;
+
+      // The next autocommit write must be visible to everyone at once, i.e. not run inside the
+      // abandoned transaction, and nothing from that transaction may ever appear.
+      await app.$executeRaw`INSERT INTO client_timeout_probe VALUES (2, 'autocommit')`;
+      const rows = await admin.$queryRaw<{ id: number; note: string }[]>`
+        SELECT id, note FROM client_timeout_probe ORDER BY id`;
+      assert.deepEqual(rows, [
+        { id: 0, note: "original" },
+        { id: 2, note: "autocommit" },
+      ]);
+    } finally {
+      await app.$disconnect();
+      await admin.$executeRaw`DROP TABLE IF EXISTS client_timeout_probe`;
+      await admin.$disconnect();
+    }
+  });
+});
 
 describe("createPrismaClient", () => {
   const cleanups: (() => unknown)[] = [];
