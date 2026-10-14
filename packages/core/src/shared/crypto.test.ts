@@ -91,6 +91,12 @@ describe("field cipher (AES-256-GCM)", () => {
     expect(() => createFieldCipher({ v2: key() }, "v2").decrypt(old, "aad")).toThrow(DecryptionError);
   });
 
+  test("ignores whitespace around a key", () => {
+    const v1 = key();
+    const ciphertext = createFieldCipher({ v1 }, "v1").encrypt("IBAN", "aad");
+    expect(createFieldCipher({ v1: `${v1}\n` }, "v1").decrypt(ciphertext, "aad")).toBe("IBAN");
+  });
+
   test("rejects bad keys and versions", () => {
     expect(() => createFieldCipher({ v1: randomBytes(16).toString("base64") }, "v1")).toThrow(
       /32 random bytes/,

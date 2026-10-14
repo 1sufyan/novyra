@@ -111,8 +111,10 @@ describe("logger", () => {
     logger.info({}, "payload %j", { email: "b@example.com", token: "LEAK3", city: "Karachi" });
     logger.info("card %d declined for %s", 4111111111111111, "ayesha@example.com");
     logger.info("object %o", { password: "hunter2" });
+    logger.error("failed: %s", new Error("no user ayesha@example.com"));
     for (const line of lines) expectClean(line);
     expect(JSON.stringify(lines[0])).toContain("Karachi");
+    expect(lines[3]).toMatchObject({ msg: "failed: Error: no user [redacted]" });
   });
 
   test("redacts short sensitive words inside longer keys, and card numbers held as numbers", () => {
@@ -139,6 +141,22 @@ describe("logger", () => {
     logger.info({ payment: { card: 4111111111111111, amount: 125000 } }, "charged");
     expectClean(lines[0]);
     expect(lines[0]).toMatchObject({ payment: { amount: 125000 } });
+  });
+
+  test("masks keys, keeps __proto__ keys visible, and stays linear on long strings", () => {
+    const { lines, logger } = capture();
+    logger.info({ deliveries: { "ayesha@example.com": "bounced" } }, "keys");
+    logger.info({ body: JSON.parse('{"__proto__": {"orderId": "o-1"}, "b": 2}') as unknown }, "proto");
+    expectClean(lines[0]);
+    expect(lines[0]).toMatchObject({ deliveries: { "[redacted]": "bounced" } });
+    expect(lines[1]).toMatchObject({ body: { b: 2 } });
+    expect(JSON.stringify(lines[1])).toContain('"__proto__":{"orderId":"o-1"}');
+
+    for (const long of ["a".repeat(65_536), "0123456789abcdef".repeat(4_096)]) {
+      const started = performance.now();
+      maskText(long);
+      expect(performance.now() - started).toBeLessThan(100);
+    }
   });
 
   test("never throws on hostile values", () => {

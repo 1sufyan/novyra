@@ -49,7 +49,9 @@ export function isSensitiveKey(key: string): boolean {
   return words.some((word) => SENSITIVE_WORDS.has(word));
 }
 
-const EMAIL = /[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/gi;
+// Every quantifier is bounded, so the work per start position is constant and masking stays linear
+// in the length of the text (unbounded `+` here backtracks quadratically on long runs without "@").
+const EMAIL = /[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63}){0,8}\.[a-z]{2,24}/gi;
 /** 13–19 digits, optionally grouped by spaces or dashes: the shape of a card number. */
 const CARD_LIKE = /\b\d(?:[ -]?\d){12,18}\b/g;
 
@@ -102,9 +104,21 @@ function scrub(value: unknown, depth: number, ancestors: object[]): unknown {
 
   const result: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) {
-    result[key] = isSensitiveKey(key) ? CENSOR : scrub(item, depth + 1, next);
+    // Keys can carry data too (a map keyed by email address). defineProperty keeps a "__proto__"
+    // key as an ordinary property instead of changing the copy's prototype.
+    Object.defineProperty(result, maskText(key), {
+      value: isSensitiveKey(key) ? CENSOR : scrub(item, depth + 1, next),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
   }
   return result;
+}
+
+/** A printf-style value: an Error reads as "Name: message" (as with %s), everything else is scrubbed. */
+function scrubArgument(value: unknown): unknown {
+  return value instanceof Error ? maskText(String(value)) : redactForLog(value);
 }
 
 /** Returns a copy of `value` that is safe to log. */
@@ -135,17 +149,17 @@ export function createLogger(service: string, options: CreateLoggerOptions = {})
         if (args.length === 0) return method.apply(this, args);
         const [first, ...rest] = args as unknown[];
         const call = (final: unknown[]) => method.apply(this, final as Parameters<LogFn>);
-        if (typeof first === "string") return call([maskText(first), ...rest.map(redactForLog)]);
+        if (typeof first === "string") return call([maskText(first), ...rest.map(scrubArgument)]);
 
         const object = first instanceof Error ? { err: first } : first;
         const [message, ...values] = rest;
         if (typeof message === "string")
-          return call([object, maskText(message), ...values.map(redactForLog)]);
+          return call([object, maskText(message), ...values.map(scrubArgument)]);
         // pino falls back to the error's own message, which would skip masking: supply it masked.
         const err =
           typeof object === "object" && object !== null ? (object as { err?: unknown }).err : undefined;
         const fallback = err instanceof Error ? [maskText(err.message)] : [];
-        return call([object, ...fallback, ...rest.map(redactForLog)]);
+        return call([object, ...fallback, ...rest.map(scrubArgument)]);
       },
     },
     // Attach the request id, when there is one, to every line.

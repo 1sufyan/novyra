@@ -258,7 +258,7 @@ flowchart LR
 - **Request IDs:** `proxy.ts` keeps an incoming `x-request-id` only when it is a well-formed UUID and otherwise assigns a fresh one, so clients can't put arbitrary text into logs (a client can still choose its UUID). It flows into logs, audit logs, Sentry and outbound provider calls.
 - **Structured logs** (pino, `createLogger`). Every logged object is scrubbed at any depth: values under keys naming passwords, tokens, secrets, API keys, authorization, cookies, emails, phones, IBANs, card numbers, CVVs, OTPs or PINs are replaced (case and separators ignored), and emails and card numbers inside strings and messages are masked (docs/03 §14).
 - **Sentry** for errors and performance in both apps. PII scrubbing on, source maps uploaded from CI only.
-- **Health:** `GET /api/health` checks DB connectivity and outbox backlog. External uptime monitoring alerts on failure.
+- **Health:** `GET /api/health` checks DB connectivity and outbox backlog within 3 s; the database enforces the same deadline (statement and lock timeouts), so a slow check frees its connection instead of starving the pool. External uptime monitoring alerts on failure.
 - **Business alerts:** outbox `DEAD` events, payments stuck in `REQUIRES_ACTION`, unverified bank transfers older than 24h, shipments with no tracking update for 72h, low stock, refund failures.
 - **Backups:** managed PITR (≥ 7 days), plus a weekly logical dump to separate storage. Restore drills each quarter.
 

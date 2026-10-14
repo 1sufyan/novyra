@@ -17,10 +17,14 @@ const secret = z.string().min(SECRET_MIN_LENGTH, `must be at least ${SECRET_MIN_
  * decode to 32 bytes; the round trip rejects it, and the byte-variety check rejects placeholders
  * such as "AAAA…" that random bytes essentially never resemble.
  */
-const encryptionKey = z.string().refine((value) => {
-  const key = Buffer.from(value, "base64");
-  return key.length === 32 && key.toString("base64") === value && new Set(key).size >= 16;
-}, "must be 32 random bytes, base64-encoded (openssl rand -base64 32)");
+// Trimmed first: a trailing newline from a secrets file is not part of the key.
+const encryptionKey = z
+  .string()
+  .trim()
+  .refine((value) => {
+    const key = Buffer.from(value, "base64");
+    return key.length === 32 && key.toString("base64") === value && new Set(key).size >= 16;
+  }, "must be 32 random bytes, base64-encoded (openssl rand -base64 32)");
 
 const postgresUrl = z.url({
   protocol: /^postgres(ql)?$/,

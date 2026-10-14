@@ -79,6 +79,11 @@ describe("parseServerEnv", () => {
     ).toThrow(/DATA_ENCRYPTION_KEY must be 32 random bytes/);
   });
 
+  test("accepts a key with a trailing newline, and returns it trimmed", () => {
+    const key = randomBytes(32).toString("base64");
+    expect(parseServerEnv({ ...valid, DATA_ENCRYPTION_KEY: `${key}\n` }).DATA_ENCRYPTION_KEY).toBe(key);
+  });
+
   test("rejects passphrases and placeholders that happen to decode to 32 bytes", () => {
     for (const key of [
       "changeme changeme changeme changeme changeme123",

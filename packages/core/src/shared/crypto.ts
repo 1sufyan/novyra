@@ -73,7 +73,9 @@ const VERSION_PATTERN = /^v\d+$/;
  * schema. A passphrase typed in the base64 alphabet can't be told apart: generate keys with
  * `openssl rand -base64 32`.
  */
-export function decodeEncryptionKey(encoded: string): Buffer | undefined {
+export function decodeEncryptionKey(value: string): Buffer | undefined {
+  // Surrounding whitespace (a trailing newline from a secrets file) is not part of the key.
+  const encoded = value.trim();
   const key = Buffer.from(encoded, "base64");
   const canonical = key.length === 32 && key.toString("base64") === encoded;
   return canonical && new Set(key).size >= 16 ? key : undefined;

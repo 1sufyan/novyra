@@ -39,6 +39,20 @@ const BODY_HEADERS = [
 /** The only headers that follow a redirect to another origin; any other header may carry a credential. */
 const CROSS_ORIGIN_HEADERS = new Set(["accept", "accept-language", "user-agent"]);
 
+/** Bodies fetch can send twice; a stream or async iterable is consumed by the first request. */
+function isReplayable(body: RequestInit["body"]): boolean {
+  return (
+    body === undefined ||
+    body === null ||
+    typeof body === "string" ||
+    body instanceof ArrayBuffer ||
+    ArrayBuffer.isView(body) ||
+    body instanceof Blob ||
+    body instanceof FormData ||
+    body instanceof URLSearchParams
+  );
+}
+
 export function createHttpClient(options: HttpClientOptions): HttpFetch {
   const { name, timeoutMs = 10_000, allowInsecureLocalhost = false, maxRedirects = 0 } = options;
   const allowed = new Set(options.allowedHosts.map((host) => host.toLowerCase()));
@@ -80,7 +94,7 @@ export function createHttpClient(options: HttpClientOptions): HttpFetch {
         method = "GET";
         body = undefined;
         for (const header of BODY_HEADERS) headers.delete(header);
-      } else if (body instanceof ReadableStream) {
+      } else if (!isReplayable(body)) {
         throw new HttpRequestBlockedError(`${name}: a streamed request body cannot be sent again`);
       }
       if (next.origin !== url.origin) {

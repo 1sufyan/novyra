@@ -57,6 +57,35 @@ describe("checkHealth", () => {
     await unreachable.$disconnect();
   });
 
+  test("a check that times out frees its connection, so it can't starve the pool", async () => {
+    const app = createPrismaClient(process.env.TEST_DATABASE_URL!, { maxConnections: 2 });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    // Another session holds the outbox table, as a migration might.
+    const locker = prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`LOCK TABLE outbox_events IN ACCESS EXCLUSIVE MODE`;
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const reports = await Promise.all(
+        Array.from({ length: 4 }, () => checkHealth(app, { timeoutMs: 300 })),
+      );
+      expect(reports.every((report) => report.checks.database === "unreachable")).toBe(true);
+
+      const started = Date.now();
+      await app.$queryRaw`SELECT 1`;
+      expect(Date.now() - started).toBeLessThan(1_000);
+    } finally {
+      release();
+      await locker;
+      await app.$disconnect();
+    }
+  });
+
   test("degraded within its deadline when the database accepts connections but never answers", async () => {
     const sockets = new Set<Socket>();
     const silent = createServer((socket) => void sockets.add(socket));

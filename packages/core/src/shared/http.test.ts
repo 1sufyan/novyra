@@ -159,6 +159,17 @@ describe("createHttpClient", () => {
         duplex: "half",
       } as RequestInit),
     ).rejects.toThrow(/streamed request body/);
+
+    async function* generated() {
+      yield new TextEncoder().encode("chunk");
+    }
+    await expect(
+      client({ maxRedirects: 3 })(`${base}/pay-temporary`, {
+        method: "POST",
+        body: generated(),
+        duplex: "half",
+      } as unknown as RequestInit),
+    ).rejects.toThrow(/streamed request body/);
   });
 
   test("times out", async () => {

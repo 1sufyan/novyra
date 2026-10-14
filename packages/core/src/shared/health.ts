@@ -28,13 +28,24 @@ export async function checkHealth(
 ): Promise<HealthReport> {
   let timer: NodeJS.Timeout | undefined;
   try {
-    // Each count is filtered so it can use an index: the table keeps every DONE event.
-    const query = prisma.$queryRaw<{ dead: bigint; overdue: bigint }[]>`
-      SELECT (SELECT count(*) FROM outbox_events WHERE status = 'DEAD') AS dead,
-             (SELECT count(*) FROM outbox_events
-               WHERE status = 'PENDING' AND available_at < now() - interval '10 minutes')
-           + (SELECT count(*) FROM outbox_events
-               WHERE status = 'PROCESSING' AND locked_at < now() - interval '10 minutes') AS overdue`;
+    // The database enforces the deadline as well (statement and lock timeouts), so a check that
+    // times out ends its query and returns its pooled connection instead of holding it. The race
+    // below still covers a database that doesn't answer at all.
+    const limit = String(timeoutMs);
+    const query = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT set_config('statement_timeout', ${limit}, true),
+                                  set_config('lock_timeout', ${limit}, true)`;
+        // Each count is filtered so it can use an index: the table keeps every DONE event.
+        return tx.$queryRaw<{ dead: bigint; overdue: bigint }[]>`
+          SELECT (SELECT count(*) FROM outbox_events WHERE status = 'DEAD') AS dead,
+                 (SELECT count(*) FROM outbox_events
+                   WHERE status = 'PENDING' AND available_at < now() - interval '10 minutes')
+               + (SELECT count(*) FROM outbox_events
+                   WHERE status = 'PROCESSING' AND locked_at < now() - interval '10 minutes') AS overdue`;
+      },
+      { maxWait: timeoutMs, timeout: timeoutMs + 1_000 },
+    );
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new HealthTimeoutError()), timeoutMs);
     });
